@@ -12,10 +12,12 @@ export class SignalAggregator {
       randomForest: new RandomForestModel(),
       lstm: new LSTMModel()
     };
+    this.lastLstmSymbol = null;
   }
 
   async initializeLstm() {
      await this.models.lstm.loadModelFromDb();
+     this.lastLstmSymbol = useStore.getState().symbol || 'EUR/USD';
   }
 
   /**
@@ -26,8 +28,16 @@ export class SignalAggregator {
   async generateSignal(features, currentPrice) {
     if (!features || features.length === 0) return null;
     
-    // We get the weights dynamically from Zustand
+    // We get the weights/symbol dynamically from Zustand
     const weights = useStore.getState().modelWeights;
+    const currentSymbol = useStore.getState().symbol;
+
+    // Auto-initialize or reload LSTM if the active symbol changed
+    if (this.lastLstmSymbol !== currentSymbol) {
+       await this.initializeLstm();
+       this.lastLstmSymbol = currentSymbol;
+    }
+
     const latestRow = features[features.length - 1];
 
     // Get individual predictions (LSTM needs a sequence, others need just latest row)

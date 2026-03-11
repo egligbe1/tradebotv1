@@ -7,6 +7,7 @@ import { Play, TrendingUp, TrendingDown, Clock, ShieldAlert, RefreshCw } from 'l
 
 export default function HistoryPage() {
   const apiKey = useStore((state) => state.apiKey);
+  const symbol = useStore((state) => state.symbol);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [results, setResults] = useState(null);
@@ -18,7 +19,7 @@ export default function HistoryPage() {
      
      try {
          // We fetch a larger chunk of memory for a solid backtest
-         const data = await dataManager.getCandles('EUR/USD', '1h', 1000);
+         const data = await dataManager.getCandles(symbol, '1h', 1000);
          const { trades, equityCurve, metrics } = await backtestEngine.runBacktest(data.values);
          setResults({ trades, equityCurve, metrics });
      } catch(e) {

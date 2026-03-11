@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { createChart, CrosshairMode, CandlestickSeries } from 'lightweight-charts';
 
-export function PriceChart({ data, width = 0, height = 400, support, resistance, signal }) {
+export function PriceChart({ data, width = 0, height = 400, support, resistance, signal, symbol = 'EUR/USD' }) {
   const chartContainerRef = useRef();
   const chartRef = useRef();
 
@@ -142,7 +142,7 @@ export function PriceChart({ data, width = 0, height = 400, support, resistance,
   return (
     <div className="w-full relative bg-card border border-border rounded-xl overflow-hidden shadow-md">
        <div className="absolute top-4 left-4 z-10 text-sm font-semibold tracking-wider opacity-80 backdrop-blur-sm bg-background/50 px-2 py-1 rounded">
-         EUR/USD  &bull; H1
+         {symbol}  &bull; H1
        </div>
        <div ref={chartContainerRef} className="w-full" />
     </div>

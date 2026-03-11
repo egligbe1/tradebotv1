@@ -1,4 +1,5 @@
 import * as tf from '@tensorflow/tfjs';
+import { useStore } from '@/store/useStore';
 
 const FEATURES = [
   'log_return', 'rsi_norm', 'hl_range', 'body_size', 'macd_hist', 
@@ -9,7 +10,12 @@ const FEATURES = [
 ];
 const LOOKBACK = 24; // H1 candles of features
 const FEATURE_COUNT = FEATURES.length;
-const MODEL_SAVE_PATH = 'indexeddb://eurusd-lstm-model';
+
+const getModelSavePath = () => {
+    const symbol = useStore.getState().symbol || 'EUR/USD';
+    const formattedSymbol = symbol.replace('/', '').toLowerCase();
+    return `indexeddb://${formattedSymbol}-lstm-model`;
+};
 
 export class LSTMModel {
   constructor() {
@@ -20,7 +26,8 @@ export class LSTMModel {
 
   async loadModelFromDb() {
     try {
-      const loadedModel = await tf.loadLayersModel(MODEL_SAVE_PATH);
+      const path = getModelSavePath();
+      const loadedModel = await tf.loadLayersModel(path);
       
       // Verify input shape matches current FEATURE_COUNT
       const expectedShape = [null, LOOKBACK, FEATURE_COUNT];
@@ -177,8 +184,9 @@ export class LSTMModel {
     this.isTrained = true;
 
     // Save model to DB
-    await this.model.save(MODEL_SAVE_PATH);
-    console.log("[LSTMModel] Weights saved to DB.");
+    const path = getModelSavePath();
+    await this.model.save(path);
+    console.log(`[LSTMModel] Weights saved to DB at ${path}.`);
   }
 
   predictSequence(recentFeatures) {

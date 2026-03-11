@@ -24,14 +24,15 @@ export default function ModelsPage() {
 
   const handleRetrainLSTM = async () => {
      if (!apiKey) return alert("API Key required to fetch data for training.");
+     const symbol = useStore.getState().symbol;
      
      setTrainingState({ 
         isTraining: true, epoch: 0, loss: 0, accuracy: 0, sequences: 0, validRows: 0,
-        message: 'Fetching historical data...' 
+        message: `Fetching historical data for ${symbol}...` 
      });
      
      try {
-       const data = await dataManager.getCandles('EUR/USD', '1h', 3000);
+       const data = await dataManager.getCandles(symbol, '1h', 3000);
        const features = FeatureEngine.extractFeatures(data.values);
        
        setTrainingState(prev => ({ ...prev, message: 'Compiling TensorFlow layers...' }));

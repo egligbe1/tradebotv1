@@ -14,6 +14,7 @@ export default function ChartPage() {
   const [resistance, setResistance] = useState(null);
   const [signal, setSignal] = useState(null);
   const apiKey = useStore(state => state.apiKey);
+  const symbol = useStore(state => state.symbol);
 
   const fetchChartData = async () => {
     if (!apiKey) {
@@ -23,7 +24,7 @@ export default function ChartPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await dataManager.getCandles('EUR/USD', '1h', 5000);
+      const data = await dataManager.getCandles(symbol, '1h', 5000);
       const fetchedCandles = data.values;
       setCandles(fetchedCandles);
 
@@ -47,7 +48,7 @@ export default function ChartPage() {
 
   useEffect(() => {
     fetchChartData();
-  }, [apiKey]);
+  }, [apiKey, symbol]);
 
   if (!apiKey) {
      return <div className="p-6">Requires API Key in Settings to view chart.</div>
@@ -75,6 +76,7 @@ export default function ChartPage() {
                 support={support}
                 resistance={resistance}
                 signal={signal}
+                symbol={symbol}
              />
           </div>
       </div>

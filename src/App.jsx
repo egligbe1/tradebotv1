@@ -39,7 +39,10 @@ function Sidebar() {
       
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-card border-r border-border transform transition-transform duration-200 ease-in-out md:relative md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-6 h-16 flex items-center border-b border-border">
-          <span className="font-bold text-lg tracking-tight text-primary">EURUSD Intelligence</span>
+          <div className="flex items-center space-x-2">
+            <Activity className="h-6 w-6 text-primary" />
+            <span className="font-bold text-lg tracking-tight text-primary">TradeBot AI</span>
+          </div>
         </div>
         
         <nav className="p-4 space-y-1">
@@ -65,7 +68,7 @@ function Sidebar() {
 }
 
 function TopBar() {
-  const { toggleSidebar } = useStore();
+  const { toggleSidebar, symbol, setSymbol } = useStore();
   
   return (
     <header className="h-16 flex items-center justify-between px-6 bg-card border-b border-border shrink-0">
@@ -74,7 +77,19 @@ function TopBar() {
           <Menu size={20} />
         </button>
         <div className="flex items-center space-x-4">
-          <span className="font-mono font-bold text-xl tracking-wider">EUR/USD</span>
+          <select 
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value)}
+            className="bg-secondary text-secondary-foreground font-mono font-bold text-xl tracking-wider px-3 py-1 rounded-md border-none focus:ring-2 focus:ring-primary cursor-pointer outline-none"
+          >
+            <option value="EUR/USD">EUR/USD</option>
+            <option value="GBP/USD">GBP/USD</option>
+            <option value="USD/JPY">USD/JPY</option>
+            <option value="XAU/USD">XAU/USD (Gold)</option>
+            <option value="BTC/USD">BTC/USD (Bitcoin)</option>
+            <option value="SPX">S&P 500 (SPX)</option>
+            <option value="AAPL">Apple (AAPL)</option>
+          </select>
         </div>
       </div>
       <div className="flex items-center space-x-4 text-sm">

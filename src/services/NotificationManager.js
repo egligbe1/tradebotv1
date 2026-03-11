@@ -1,3 +1,5 @@
+import { useStore } from '@/store/useStore';
+
 export class NotificationManager {
   constructor() {
     this.granted = false;
@@ -35,7 +37,8 @@ export class NotificationManager {
   notifySignal(signalObj) {
      if (!this.granted || !signalObj || signalObj.signal === 'HOLD') return;
 
-     const title = `🚨 TradeBot: EUR/USD ${signalObj.signal}`;
+     const symbol = useStore.getState().symbol;
+     const title = `🚨 TradeBot: ${symbol} ${signalObj.signal}`;
      const body = `Confidence: ${(signalObj.confidence * 100).toFixed(0)}%\nEntry: ${signalObj.entry}\nSL: ${signalObj.stop_loss}`;
      
      // Generate notification

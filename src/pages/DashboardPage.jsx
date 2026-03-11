@@ -21,13 +21,14 @@ export default function DashboardPage() {
   });
   
   const apiKey = useStore(state => state.apiKey);
+  const symbol = useStore(state => state.symbol);
 
   const fetchDashboardData = async () => {
     setLoading(true);
     setError(null);
     try {
       // 1. Fetch live OHLCV
-      const data = await dataManager.getCandles('EUR/USD', '1h', 500);
+      const data = await dataManager.getCandles(symbol, '1h', 500);
       const candles = data.values;
       const currentPrice = candles[candles.length - 1].close;
 
@@ -87,9 +88,9 @@ export default function DashboardPage() {
        // Request Notification Permissions on load
        try { notificationManager.requestPermission(); } catch(e) {}
     } else {
-       setLoading(false);
+       fetchDashboardData();
     }
-  }, [apiKey]);
+  }, [apiKey, symbol]);
 
   if (!apiKey) {
     return (
@@ -151,6 +152,7 @@ export default function DashboardPage() {
                  support={dashboardData.support}
                  resistance={dashboardData.resistance}
                  signal={dashboardData.signal}
+                 symbol={symbol}
               />
             </div>
         </div>
