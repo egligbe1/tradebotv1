@@ -34,6 +34,10 @@ export default function DashboardPage() {
       // 2. Generate Features & Signal
       const features = FeatureEngine.extractFeatures(candles);
       const signal = await signalAggregator.generateSignal(features, currentPrice);
+      
+      const latestFeature = features[features.length - 1];
+      const support = latestFeature ? latestFeature.support_50 : null;
+      const resistance = latestFeature ? latestFeature.resistance_50 : null;
 
       setDashboardData(prev => {
           // If the signal was previously HOLD, and is now BUY/SELL, notify!
@@ -48,7 +52,9 @@ export default function DashboardPage() {
           return {
              candles,
              signal: newSignal,
-             currentPrice
+             currentPrice,
+             support,
+             resistance
           }
       });
 
@@ -139,7 +145,13 @@ export default function DashboardPage() {
               <ModelVotes signalObject={dashboardData.signal} />
             </div>
             <div className="flex-1 min-h-[250px] relative mt-2">
-              <PriceChart data={dashboardData.candles} height={350} />
+              <PriceChart 
+                 data={dashboardData.candles} 
+                 height={350} 
+                 support={dashboardData.support}
+                 resistance={dashboardData.resistance}
+                 signal={dashboardData.signal}
+              />
             </div>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { createChart, CrosshairMode, CandlestickSeries } from 'lightweight-charts';
 
-export function PriceChart({ data, width = 0, height = 400 }) {
+export function PriceChart({ data, width = 0, height = 400, support, resistance, signal }) {
   const chartContainerRef = useRef();
   const chartRef = useRef();
 
@@ -62,6 +62,59 @@ export function PriceChart({ data, width = 0, height = 400 }) {
           uniqueData.sort((a,b) => a.time - b.time);
           
           candleSeries.setData(uniqueData);
+          
+          // --- Structural Markers ---
+          if (support) {
+             candleSeries.createPriceLine({
+                price: support,
+                color: '#10b981', // green-500
+                lineWidth: 2,
+                lineStyle: 2, // Dashed
+                axisLabelVisible: true,
+                title: 'Support',
+             });
+          }
+          if (resistance) {
+             candleSeries.createPriceLine({
+                price: resistance,
+                color: '#ef4444', // red-500
+                lineWidth: 2,
+                lineStyle: 2, // Dashed
+                axisLabelVisible: true,
+                title: 'Resistance',
+             });
+          }
+          if (signal && signal.signal !== 'HOLD' && signal.entry) {
+             candleSeries.createPriceLine({
+                price: signal.entry,
+                color: '#f59e0b', // amber-500
+                lineWidth: 2,
+                lineStyle: 0, // Solid
+                axisLabelVisible: true,
+                title: `Entry (${signal.signal})`,
+             });
+             if (signal.stop_loss) {
+                candleSeries.createPriceLine({
+                   price: signal.stop_loss,
+                   color: '#f87171', // red-400
+                   lineWidth: 1,
+                   lineStyle: 3, // Dotted
+                   axisLabelVisible: true,
+                   title: 'SL',
+                });
+             }
+             if (signal.take_profit_1) {
+                candleSeries.createPriceLine({
+                   price: signal.take_profit_1,
+                   color: '#34d399', // emerald-400
+                   lineWidth: 1,
+                   lineStyle: 3, // Dotted
+                   axisLabelVisible: true,
+                   title: 'TP1',
+                });
+             }
+          }
+
           chart.timeScale().fitContent();
         }
 
@@ -84,7 +137,7 @@ export function PriceChart({ data, width = 0, height = 400 }) {
         console.log("Error initializing chart:", e);
         return () => {};
     }
-  }, [data, height]);
+  }, [data, height, support, resistance, signal]);
 
   return (
     <div className="w-full relative bg-card border border-border rounded-xl overflow-hidden shadow-md">

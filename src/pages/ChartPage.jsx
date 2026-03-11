@@ -23,7 +23,7 @@ export default function ChartPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await dataManager.getCandles('EUR/USD', '1h', 500);
+      const data = await dataManager.getCandles('EUR/USD', '1h', 5000);
       const fetchedCandles = data.values;
       setCandles(fetchedCandles);
 
