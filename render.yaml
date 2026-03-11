@@ -1,6 +1,0 @@
-services:
-  - type: web
-    name: tradebot-service
-    env: node
-    buildCommand: npm install && npm run build
-    startCommand: npm start
