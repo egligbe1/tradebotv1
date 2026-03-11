@@ -180,7 +180,7 @@ class DataManager {
     } else {
        // We don't have enough data at all, fetch up to the requested size
        console.log(`[DataManager] Insufficient cache for ${cacheKey}. Fetching full outputsize.`);
-       fetchOutputSize = Math.min(outputsize, 2000);
+       fetchOutputSize = Math.min(outputsize, 5000);
     }
 
     // 2. Fetch from API
