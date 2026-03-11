@@ -1,0 +1,24 @@
+
+C:\Users\EmmanuelGligbe\Downloads\Projects\TradeBot\trade_botv1\src\components\dashboard\PriceChart.jsx
+  4:36  error  'width' is assigned a value but never used  no-unused-vars
+
+C:\Users\EmmanuelGligbe\Downloads\Projects\TradeBot\trade_botv1\src\components\dashboard\SignalCard.jsx
+  4:44  error  'currentPrice' is defined but never used  no-unused-vars
+
+C:\Users\EmmanuelGligbe\Downloads\Projects\TradeBot\trade_botv1\src\models\LSTMModel.js
+   31:14  error  'e' is defined but never used                                                         no-unused-vars
+  106:50  error  'epoch' is defined but never used                                                     no-unused-vars
+  106:57  error  'logs' is defined but never used                                                      no-unused-vars
+  124:9   error  'hist' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+C:\Users\EmmanuelGligbe\Downloads\Projects\TradeBot\trade_botv1\src\pages\ChartPage.jsx
+  33:6  warning  React Hook useEffect has a missing dependency: 'fetchChartData'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\Users\EmmanuelGligbe\Downloads\Projects\TradeBot\trade_botv1\src\pages\ModelsPage.jsx
+  1:27  error  'useEffect' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+C:\Users\EmmanuelGligbe\Downloads\Projects\TradeBot\trade_botv1\src\services\FeatureEngine.js
+  92:32  error  'period' is defined but never used  no-unused-vars
+
+✖ 9 problems (8 errors, 1 warning)
+
