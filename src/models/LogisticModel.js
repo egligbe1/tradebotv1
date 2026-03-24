@@ -1,4 +1,7 @@
 import LogisticRegression from 'ml-logistic-regression';
+import { Matrix } from 'ml-matrix';
+import { useStore } from '@/store/useStore';
+import { syncManager } from '@/services/SyncManager';
 
 // Features required for the logistic regression model
 const FEATURES = [
@@ -14,6 +17,55 @@ export class LogisticModel {
     this.name = 'LogisticModel';
     this.model = null;
     this.isTrained = false;
+  }
+
+  getStorageKey(symbolOverride = null) {
+    const symbol = symbolOverride || useStore.getState().symbol || 'EUR/USD';
+    return `tradebot_logistic_${symbol.replace('/', '').toLowerCase()}`;
+  }
+
+  async saveToLocal(symbolOverride = null) {
+    if (!this.model || !this.isTrained) return;
+    try {
+      const modelData = {
+        weights: this.model.weights,
+        theta: this.model.theta
+      };
+      localStorage.setItem(this.getStorageKey(symbolOverride), JSON.stringify(modelData));
+      
+      // Auto-sync to cloud
+      const symbol = symbolOverride || useStore.getState().symbol;
+      await syncManager.uploadModel(symbol, 'logistic', modelData);
+    } catch (e) {
+      console.error("[LogisticModel] Save failed:", e.message);
+    }
+  }
+
+  async loadFromLocal(cloudWeights = null) {
+    try {
+      let modelData = cloudWeights;
+      if (!modelData) {
+        const saved = localStorage.getItem(this.getStorageKey());
+        if (!saved) return false;
+        modelData = JSON.parse(saved);
+      }
+
+      this.model = new LogisticRegression({ numSteps: 1000, learningRate: 0.05 });
+      this.model.weights = modelData.weights;
+      this.model.theta = modelData.theta;
+      this.isTrained = true;
+      
+      // If we loaded from cloud, save to local for faster next boot
+      if (cloudWeights) {
+        localStorage.setItem(this.getStorageKey(), JSON.stringify(modelData));
+      }
+      
+      console.log("[LogisticModel] Loaded weights.");
+      return true;
+    } catch (e) {
+      console.error("[LogisticModel] Load failed:", e.message);
+      return false;
+    }
   }
 
   /**
@@ -53,7 +105,7 @@ export class LogisticModel {
     return { X, y };
   }
 
-  async train(featuresArr) {
+  async train(featuresArr, symbolOverride = null) {
     const { X, y } = this.prepareData(featuresArr);
     if (X.length < 50) {
       throw new Error("Not enough clean data to train Logistic Regression (need at least 50 valid rows).");
@@ -65,13 +117,15 @@ export class LogisticModel {
     const yTrain = y.slice(0, splitIdx);
 
     // Initialize & Train
-    // Using default options or limited iterations for browser speed
     this.model = new LogisticRegression({ numSteps: 1000, learningRate: 0.05 });
-    
-    // ml-matrix expects arrays of arrays.
-    this.model.train(xTrain, yTrain);
+
+    // ml-matrix expects Matrix objects for v2.0+ or compatible arrays.
+    // Converting to explicit Matrix/Vector avoids the `to1DArray` error.
+    this.model.train(new Matrix(xTrain), Matrix.columnVector(yTrain));
     this.isTrained = true;
-    console.log(`[LogisticModel] Trained on ${xTrain.length} samples.`);
+    console.log(`[LogisticModel] Trained on ${xTrain.length} samples for ${symbolOverride || 'current asset'}.`);
+    
+    await this.saveToLocal(symbolOverride);
   }
 
   predict(latestRow) {

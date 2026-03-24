@@ -1,5 +1,6 @@
 import * as tf from '@tensorflow/tfjs';
 import { useStore } from '@/store/useStore';
+import { syncManager } from '@/services/SyncManager';
 
 const FEATURES = [
   'log_return', 'rsi_norm', 'hl_range', 'body_size', 'macd_hist', 
@@ -11,8 +12,8 @@ const FEATURES = [
 const LOOKBACK = 24; // H1 candles of features
 const FEATURE_COUNT = FEATURES.length;
 
-const getModelSavePath = () => {
-    const symbol = useStore.getState().symbol || 'EUR/USD';
+const getModelSavePath = (symbolOverride = null) => {
+    const symbol = symbolOverride || useStore.getState().symbol || 'EUR/USD';
     const formattedSymbol = symbol.replace('/', '').toLowerCase();
     return `indexeddb://${formattedSymbol}-lstm-model`;
 };
@@ -24,9 +25,26 @@ export class LSTMModel {
     this.isTrained = false;
   }
 
-  async loadModelFromDb() {
+  async loadModelFromDb(cloudWeights = null, symbolOverride = null) {
     try {
-      const path = getModelSavePath();
+      if (cloudWeights) {
+        // Construct model from cloud artifacts
+        const modelArtifacts = cloudWeights;
+        const loadedModel = await tf.loadLayersModel(tf.io.fromMemory(modelArtifacts));
+        this.model = loadedModel;
+        this.model.compile({
+            optimizer: tf.train.adam(0.001),
+            loss: 'binaryCrossentropy',
+            metrics: ['accuracy']
+        });
+        this.isTrained = true;
+        // Also save to IndexedDB for faster local load next time
+        await this.model.save(getModelSavePath(symbolOverride));
+        console.log("[LSTMModel] Restored from Cloud artifacts.");
+        return true;
+      }
+
+      const path = getModelSavePath(symbolOverride);
       const loadedModel = await tf.loadLayersModel(path);
       
       // Verify input shape matches current FEATURE_COUNT
@@ -132,7 +150,7 @@ export class LSTMModel {
     return { X, y };
   }
 
-  async train(featuresArr, onProgressCallback = (epoch, logs) => {}, onStatsCallback = (stats) => {}) {
+  async train(featuresArr, onProgressCallback = (epoch, logs) => {}, onStatsCallback = (stats) => {}, symbolOverride = null) {
     console.log("[LSTMModel] Starting training prep...");
     
     const {X, y} = this.prepareSequences(featuresArr);
@@ -162,8 +180,8 @@ export class LSTMModel {
 
     try {
         await this.model.fit(xTrainT, yTrainT, {
-            epochs: 50,
-            batchSize: 32,
+            epochs: 30,
+            batchSize: 64, // Reduced from 128 to prevent long batch calculation stutters
             validationData: [xValT, yValT],
             shuffle: false, // critical for time series
             callbacks: {
@@ -184,9 +202,21 @@ export class LSTMModel {
     this.isTrained = true;
 
     // Save model to DB
-    const path = getModelSavePath();
+    const path = getModelSavePath(symbolOverride);
     await this.model.save(path);
     console.log(`[LSTMModel] Weights saved to DB at ${path}.`);
+
+    // Auto-sync to cloud
+    try {
+        const symbol = symbolOverride || useStore.getState().symbol;
+        // Capture model artifacts to a single object
+        const saveResult = await this.model.save(tf.io.withSaveHandler(async (artifacts) => {
+            return artifacts;
+        }));
+        await syncManager.uploadModel(symbol, 'lstm', saveResult);
+    } catch (e) {
+        console.error("[LSTMModel] Cloud sync failed:", e.message);
+    }
   }
 
   predictSequence(recentFeatures) {

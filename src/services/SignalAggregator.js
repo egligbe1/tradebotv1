@@ -3,6 +3,7 @@ import { LogisticModel } from '@/models/LogisticModel';
 import { RandomForestModel } from '@/models/RandomForestModel';
 import { LSTMModel } from '@/models/LSTMModel';
 import { useStore } from '@/store/useStore';
+import { syncManager } from '@/services/SyncManager';
 
 export class SignalAggregator {
   constructor() {
@@ -16,8 +17,42 @@ export class SignalAggregator {
   }
 
   async initializeLstm() {
-     await this.models.lstm.loadModelFromDb();
-     this.lastLstmSymbol = useStore.getState().symbol || 'EUR/USD';
+     const symbol = useStore.getState().symbol || 'EUR/USD';
+     const localSuccess = await this.models.lstm.loadModelFromDb();
+     
+     if (!localSuccess) {
+       console.log(`[SignalAggregator] LSTM local empty for ${symbol}, checking cloud...`);
+       const cloudWeights = await syncManager.downloadModel(symbol, 'lstm');
+       if (cloudWeights) {
+         await this.models.lstm.loadModelFromDb(cloudWeights);
+       }
+     }
+     this.lastLstmSymbol = symbol;
+  }
+
+  async initializeOtherModels() {
+    const symbol = useStore.getState().symbol || 'EUR/USD';
+    const otherModels = ['logistic', 'randomForest'];
+    
+    for (const mKey of otherModels) {
+      const model = this.models[mKey];
+      const localSuccess = await model.loadFromLocal();
+      
+      if (!localSuccess) {
+        console.log(`[SignalAggregator] ${mKey} local empty for ${symbol}, checking cloud...`);
+        const cloudWeights = await syncManager.downloadModel(symbol, mKey === 'randomForest' ? 'randomforest' : mKey);
+        if (cloudWeights) {
+          await model.loadFromLocal(cloudWeights);
+        }
+      }
+    }
+  }
+
+  async initializeAllModels() {
+      await Promise.all([
+          this.initializeLstm(),
+          this.initializeOtherModels()
+      ]);
   }
 
   /**
@@ -32,9 +67,9 @@ export class SignalAggregator {
     const weights = useStore.getState().modelWeights;
     const currentSymbol = useStore.getState().symbol;
 
-    // Auto-initialize or reload LSTM if the active symbol changed
+    // Auto-initialize or reload models if the active symbol changed
     if (this.lastLstmSymbol !== currentSymbol) {
-       await this.initializeLstm();
+       await this.initializeAllModels();
        this.lastLstmSymbol = currentSymbol;
     }
 

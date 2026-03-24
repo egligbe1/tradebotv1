@@ -1,6 +1,22 @@
 import React, { useEffect, useRef } from 'react';
 import { createChart, CrosshairMode, CandlestickSeries } from 'lightweight-charts';
 
+// Determines the correct decimal precision for the price axis based on the asset
+function getSymbolPrecision(symbol) {
+  const s = (symbol || '').toUpperCase();
+  // JPY pairs: 3 decimal places (e.g., 155.123)
+  if (s.includes('JPY')) return { precision: 3, minMove: 0.001 };
+  // Major Forex pairs: 5 decimal places / pipettes (e.g., 1.08452)
+  if (s.includes('/') && !s.includes('XAU') && !s.includes('XAG') && !s.includes('BTC') && !s.includes('ETH'))
+    return { precision: 5, minMove: 0.00001 };
+  // Crypto: 2 decimal places
+  if (s.includes('BTC') || s.includes('ETH')) return { precision: 2, minMove: 0.01 };
+  // Gold/Silver: 2 decimal places
+  if (s.includes('XAU') || s.includes('XAG')) return { precision: 2, minMove: 0.01 };
+  // Stocks & Indices: 2 decimal places
+  return { precision: 2, minMove: 0.01 };
+}
+
 export function PriceChart({ data, width = 0, height = 400, support, resistance, signal, symbol = 'EUR/USD' }) {
   const chartContainerRef = useRef();
   const chartRef = useRef();
@@ -36,12 +52,18 @@ export function PriceChart({ data, width = 0, height = 400, support, resistance,
         chartRef.current = chart;
 
         // lightweight-charts v5 API change: use addSeries instead of addCandlestickSeries
+        const { precision, minMove } = getSymbolPrecision(symbol);
         const candleSeries = chart.addSeries(CandlestickSeries, {
           upColor: '#26a69a',
           downColor: '#ef5350',
           borderVisible: false,
           wickUpColor: '#26a69a',
           wickDownColor: '#ef5350',
+          priceFormat: {
+            type: 'price',
+            precision: precision,
+            minMove: minMove,
+          },
         });
 
         // Formatting data for lightweight charts
@@ -137,7 +159,7 @@ export function PriceChart({ data, width = 0, height = 400, support, resistance,
         console.log("Error initializing chart:", e);
         return () => {};
     }
-  }, [data, height, support, resistance, signal]);
+  }, [data, height, support, resistance, signal, symbol]);
 
   return (
     <div className="w-full relative bg-card border border-border rounded-xl overflow-hidden shadow-md">

@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { useStore } from '@/store/useStore';
+import { useStore, AVAILABLE_SYMBOLS } from '@/store/useStore';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 // Pages
@@ -82,13 +82,9 @@ function TopBar() {
             onChange={(e) => setSymbol(e.target.value)}
             className="bg-secondary text-secondary-foreground font-mono font-bold text-xl tracking-wider px-3 py-1 rounded-md border-none focus:ring-2 focus:ring-primary cursor-pointer outline-none"
           >
-            <option value="EUR/USD">EUR/USD</option>
-            <option value="GBP/USD">GBP/USD</option>
-            <option value="USD/JPY">USD/JPY</option>
-            <option value="XAU/USD">XAU/USD (Gold)</option>
-            <option value="BTC/USD">BTC/USD (Bitcoin)</option>
-            <option value="SPX">S&P 500 (SPX)</option>
-            <option value="AAPL">Apple (AAPL)</option>
+            {AVAILABLE_SYMBOLS.map(sym => (
+              <option key={sym} value={sym}>{sym}</option>
+            ))}
           </select>
         </div>
       </div>

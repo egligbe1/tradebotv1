@@ -72,9 +72,9 @@ export default function DashboardPage() {
     if (apiKey) {
        const init = async () => {
           try {
-             await signalAggregator.initializeLstm();
+             await signalAggregator.initializeAllModels();
           } catch (e) {
-             console.log('[Dashboard] LSTM init skipped:', e.message);
+             console.log('[Dashboard] Model init skipped:', e.message);
           }
           try {
              await fetchDashboardData();

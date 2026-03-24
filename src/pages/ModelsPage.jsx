@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useStore } from '@/store/useStore';
+import { useStore, AVAILABLE_SYMBOLS } from '@/store/useStore';
 import { dataManager } from '@/services/DataManager';
 import { FeatureEngine } from '@/services/FeatureEngine';
 import { signalAggregator } from '@/services/SignalAggregator';
+import { supabase } from '@/services/SyncManager';
 import { Brain, Play, Save, RefreshCw } from 'lucide-react';
 
 export default function ModelsPage() {
@@ -22,7 +23,35 @@ export default function ModelsPage() {
 
   const [localWeights, setLocalWeights] = useState({ ...weights });
 
-  const handleRetrainLSTM = async () => {
+  // Listen to remote cloud training progress via Supabase WebSockets
+  useEffect(() => {
+    if (!supabase) return;
+    
+    const channel = supabase.channel('training_status_updates')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'training_status' },
+        (payload) => {
+           const newData = payload.new;
+           if (newData && newData.message) {
+              setTrainingState(prev => ({
+                  ...prev,
+                  isTraining: newData.is_training,
+                  message: newData.message,
+                  // Visually simulate epoch slider based on remote completion percentage
+                  epoch: Math.round((newData.progress_percent / 100) * 30)
+              }));
+           }
+        }
+      )
+      .subscribe();
+      
+    return () => {
+       supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const handleRetrainAllModels = async () => {
      if (!apiKey) return alert("API Key required to fetch data for training.");
      const symbol = useStore.getState().symbol;
      
@@ -35,6 +64,15 @@ export default function ModelsPage() {
        const data = await dataManager.getCandles(symbol, '1h', 3000);
        const features = FeatureEngine.extractFeatures(data.values);
        
+       // 1. Train Logistic Regression (Fast)
+       setTrainingState(prev => ({ ...prev, message: 'Training Logistic Regression...' }));
+       await signalAggregator.models.logistic.train(features);
+
+       // 2. Train Random Forest (Fast)
+       setTrainingState(prev => ({ ...prev, message: 'Training Random Forest...' }));
+       await signalAggregator.models.randomForest.train(features);
+
+       // 3. Train LSTM (Slow)
        setTrainingState(prev => ({ ...prev, message: 'Compiling TensorFlow layers...' }));
        
        await signalAggregator.models.lstm.train(
@@ -45,7 +83,7 @@ export default function ModelsPage() {
                  epoch: epoch + 1,
                  loss: logs.loss || 0,
                  accuracy: logs.acc || 0,
-                 message: `Training epoch ${epoch + 1}/50...`
+                 message: `Training LSTM epoch ${epoch + 1}/50...`
              }));
           },
           (stats) => {
@@ -60,14 +98,59 @@ export default function ModelsPage() {
        setTrainingState(prev => ({ 
           ...prev, 
           isTraining: false, 
-          epoch: 50, 
-          message: 'Training complete. Weights saved to IndexedDB.' 
+          epoch: 30, 
+          message: 'All models trained and synced to Cloud.' 
        }));
      } catch (e) {
          setTrainingState(prev => ({ 
             ...prev, 
             isTraining: false, 
             message: `Training failed: ${e.message}` 
+         }));
+     }
+  };
+
+  const handleBatchTrainAllAssets = async () => {
+     const ghToken = import.meta.env.VITE_GITHUB_PAT;
+     if (!ghToken) {
+         alert("Please add VITE_GITHUB_PAT to your .env file to authorize the GitHub Runner.");
+         return;
+     }
+
+     if (!apiKey) return alert("API Key required to fetch data for training.");
+     
+     setTrainingState({
+         isTraining: true, epoch: 0, loss: 0, accuracy: 0, sequences: 0, validRows: 0,
+         message: `Dispatching Cloud Runner to GitHub Actions...` 
+     });
+
+     try {
+         const res = await fetch('https://api.github.com/repos/egligbe1/tradebotv1/actions/workflows/batch-train.yml/dispatches', {
+             method: 'POST',
+             headers: {
+                 'Accept': 'application/vnd.github.v3+json',
+                 'Authorization': `Bearer ${ghToken}`,
+                 'Content-Type': 'application/json'
+             },
+             body: JSON.stringify({ ref: 'main' })
+         });
+         
+         if (!res.ok) {
+             const errorData = await res.json().catch(() => ({}));
+             throw new Error(errorData.message || res.statusText);
+         }
+         
+         setTrainingState(prev => ({ 
+            ...prev, 
+            message: 'Cloud Runner dispatched! Linking telemetry...' 
+         }));
+         
+         // Wait for the remote WebSockets listener to take over UI updates
+     } catch (e) {
+         setTrainingState(prev => ({ 
+            ...prev, 
+            isTraining: false, 
+            message: `Dispatch failed: ${e.message}` 
          }));
      }
   };
@@ -97,12 +180,11 @@ export default function ModelsPage() {
         <div className="bg-card border border-border p-6 rounded-xl shadow-sm">
            <div className="flex items-center gap-2 mb-4">
               <Brain className="text-primary w-5 h-5" />
-              <h2 className="text-lg font-semibold">TensorFlow.js LSTM Serverless Training</h2>
+              <h2 className="text-lg font-semibold">AI Neural Ensemble Training</h2>
            </div>
            
            <p className="text-sm text-muted-foreground mb-6">
-              Sequences are trained directly in your browser. This model learns from the latest 500 H1 candles 
-              and maps sequential Feature Matrices to identify trend continuations.
+              Sequences are trained directly in your browser. Train all models for the current asset, or initiate a <strong>Batch Train</strong> to sequentially process all available assets and sync them to your cloud backup.
            </p>
 
            <div className="bg-muted/30 p-4 rounded-lg border border-border/50 mb-6">
@@ -110,10 +192,10 @@ export default function ModelsPage() {
                  <span className={`${trainingState.isTraining ? 'text-primary animate-pulse' : 'text-muted-foreground'}`}>
                     {trainingState.message}
                  </span>
-                 {trainingState.isTraining && <span>Epoch {trainingState.epoch}/50</span>}
+                 {trainingState.isTraining && <span>Epoch {trainingState.epoch}/30</span>}
               </div>
               <div className="w-full bg-background rounded-full h-2 overflow-hidden mb-2">
-                 <div className="bg-primary h-2 transition-all duration-300" style={{ width: `${(trainingState.epoch / 50) * 100}%` }}></div>
+                 <div className="bg-primary h-2 transition-all duration-300" style={{ width: `${(trainingState.epoch / 30) * 100}%` }}></div>
               </div>
               <div className="flex justify-between text-xs text-muted-foreground font-mono">
                  <span>Loss: {trainingState.loss.toFixed(4)}</span>
@@ -122,14 +204,25 @@ export default function ModelsPage() {
               </div>
            </div>
 
-           <button 
-              onClick={handleRetrainLSTM}
-              disabled={trainingState.isTraining}
-              className="w-full flex justify-center items-center gap-2 bg-primary text-primary-foreground font-semibold py-2 rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
-           >
-              {trainingState.isTraining ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-              {trainingState.isTraining ? 'Training Model...' : 'Trigger Walk-Forward Retrain'}
-           </button>
+           <div className="flex flex-col gap-3">
+             <button 
+                onClick={handleRetrainAllModels}
+                disabled={trainingState.isTraining}
+                className="w-full flex justify-center items-center gap-2 bg-secondary text-secondary-foreground font-semibold py-2 rounded-md hover:bg-secondary/90 transition-colors disabled:opacity-50"
+             >
+                {trainingState.isTraining ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                {trainingState.isTraining ? 'Training...' : 'Train Current Asset'}
+             </button>
+             
+             <button 
+                onClick={handleBatchTrainAllAssets}
+                disabled={trainingState.isTraining}
+                className="w-full flex justify-center items-center gap-2 bg-primary text-primary-foreground font-semibold py-2 rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 border border-primary/20 shadow-[0_0_15px_rgba(var(--primary),0.2)]"
+             >
+                {trainingState.isTraining ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />}
+                {trainingState.isTraining ? 'Batch Training...' : 'Batch Train All Assets'}
+             </button>
+           </div>
         </div>
 
         {/* Ensemble Tuning Panel */}

@@ -1,0 +1,37 @@
+name: "Batch Train AI Models"
+
+on:
+  workflow_dispatch:
+    # Triggered manually or via frontend REST API
+
+jobs:
+  train-cloud:
+    name: Cloud Runner (AI Tensor Operations)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js v20 Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Project Dependencies
+        run: npm ci
+
+      - name: Inject C++ Fast Tensor Bindings
+        # Install tfjs-node to massively speed up the LSTM array operations on the runner
+        run: npm install @tensorflow/tfjs-node --no-save
+
+      - name: Execute Model Training Loop
+        # Run the isolated machine learning sequence
+        run: node scripts/cloud-train.js
+        env:
+          VITE_TWELVE_DATA_API_KEY: ${{ secrets.VITE_TWELVE_DATA_API_KEY }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
