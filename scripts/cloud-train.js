@@ -158,6 +158,7 @@ function trainRandomForest(featuresArr, symbol) {
 
     let bestModel = null;
     let bestAcc = -1;
+    let bestGrid = null;
 
     console.log(`   └─ Grid Searching Hyperparameters...`);
     for (const grid of grids) {
@@ -168,10 +169,11 @@ function trainRandomForest(featuresArr, symbol) {
         if (acc > bestAcc) {
             bestAcc = acc;
             bestModel = model;
+            bestGrid = grid;
         }
     }
     
-    console.log(`   ✨ [Tuner Selected] Depth: ${bestModel.options.treeOptions.maxDepth} | Trees: ${bestModel.options.nEstimators} | Val Acc: ${(bestAcc*100).toFixed(1)}%`);
+    console.log(`   ✨ [Tuner Selected] Depth: ${bestGrid.treeOptions.maxDepth} | Trees: ${bestGrid.nEstimators} | Val Acc: ${(bestAcc*100).toFixed(1)}%`);
     return bestModel.toJSON();
 }
 
