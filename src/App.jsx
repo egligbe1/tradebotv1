@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { useStore, AVAILABLE_SYMBOLS } from '@/store/useStore';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { realtimeAlertManager } from '@/services/RealtimeAlertManager';
 
 // Pages
 import DashboardPage from '@/pages/DashboardPage';
@@ -100,9 +101,12 @@ function TopBar() {
 }
 
 function Layout({ children }) {
-  // Theme initialization
+  // Theme initialization and Serverless Sentinel Mount
   useEffect(() => {
     document.documentElement.classList.add('dark');
+    realtimeAlertManager.start();
+    
+    return () => realtimeAlertManager.stop();
   }, []);
 
   return (

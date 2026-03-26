@@ -34,7 +34,7 @@ if (!supabaseUrl || !supabaseKey || !twelveDataKey) {
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const AVAILABLE_SYMBOLS = [
-  'EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD', 'BTC/USD', 'SPX', 'AAPL'
+  'EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD', 'BTC/USD', 'ETH/USD', 'SOL/USD'
 ];
 
 // Logistic / RF Features
@@ -43,7 +43,7 @@ const FEATURES_22 = [
   'bb_pct_b', 'bb_width', 'atr_norm', 'stoch_k', 'stoch_d', 
   'cci', 'williams_r', 'vol_ratio', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
   'dist_to_support', 'dist_to_resistance', 'pivot_dist', 
-  'trigger_engulfing', 'trigger_pinbar'
+  'trigger_engulfing', 'trigger_pinbar', 'trend_regime', 'trend_strength'
 ];
 
 // LSTM Features
@@ -52,7 +52,7 @@ const FEATURES_20 = [
     'bb_pct_b', 'bb_width', 'atr_norm', 'stoch_k', 'stoch_d', 
     'vol_ratio', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
     'dist_to_support', 'dist_to_resistance', 'pivot_dist', 
-    'trigger_engulfing', 'trigger_pinbar'
+    'trigger_engulfing', 'trigger_pinbar', 'trend_regime', 'trend_strength'
 ];
 const LOOKBACK = 24;
 

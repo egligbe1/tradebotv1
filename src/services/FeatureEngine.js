@@ -117,6 +117,10 @@ export class FeatureEngine {
         row.ema21 = padAlign(ema21, 21);
         row.ema50 = padAlign(ema50, 50);
         row.ema200 = padAlign(ema200, 200);
+
+        // Trend Regime features (Distance to EMAs)
+        row.trend_regime = row.ema200 ? (c.close - row.ema200) / row.ema200 : 0;
+        row.trend_strength = (row.ema50 && row.ema200) ? (row.ema50 - row.ema200) / row.ema200 : 0;
         
         // Cross signals
         row.ema9_gt_21 = (row.ema9 && row.ema21) ? (row.ema9 > row.ema21 ? 1 : 0) : null;
@@ -232,11 +236,36 @@ export class FeatureEngine {
         row.macd_hist_lag1 = i >= 1 ? features[i-1].macd_hist : null;
         row.macd_hist_lag2 = i >= 2 ? features[i-2].macd_hist : null;
 
-        // Targets (for historical training)
-        // 1 if NEXT candle's close is higher than CURRENT close
-        row.target_class = (i + 1 < features.length && features[i+1].close > row.close) ? 1 : 0;
-        // Target specifically for the last row is unknown.
-        if (i === features.length - 1) row.target_class = null; 
+        // Targets (for historical training) - TRIPLE BARRIER METHOD
+        const LOOKAHEAD = 24;
+        const TP_PCT = 0.005; // 0.5% Take Profit 
+        const SL_PCT = 0.002; // 0.2% Stop Loss 
+        
+        row.target_class = 0; // Default to HOLD/SELL
+        
+        if (i < features.length - 1) {
+            const entryPrice = row.close;
+            const upperBarrier = entryPrice * (1 + TP_PCT);
+            const lowerBarrier = entryPrice * (1 - SL_PCT);
+            
+            for (let j = 1; j <= LOOKAHEAD; j++) {
+                if (i + j >= features.length) break;
+                const futureCandle = features[i + j];
+                
+                if (futureCandle.high >= upperBarrier && futureCandle.low <= lowerBarrier) {
+                    row.target_class = 0; // Ambiguous/volatile crash, assume loss
+                    break;
+                } else if (futureCandle.high >= upperBarrier) {
+                    row.target_class = 1; // Clean Win
+                    break;
+                } else if (futureCandle.low <= lowerBarrier) {
+                    row.target_class = 0; // Loss
+                    break;
+                }
+            }
+        } else {
+            row.target_class = null; // Cannot compute for the very active, unclosed hour
+        }
         
         row.forward_return_1 = (i + 1 < features.length) ? (features[i+1].close - row.close) / row.close : null;
         row.forward_return_3 = (i + 3 < features.length) ? (features[i+3].close - row.close) / row.close : null;

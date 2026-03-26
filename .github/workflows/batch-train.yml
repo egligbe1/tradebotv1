@@ -3,6 +3,9 @@ name: "Batch Train AI Models"
 on:
   workflow_dispatch:
     # Triggered manually or via frontend REST API
+  schedule:
+    # Run automatically every day at 00:00 UTC (Midnight) to flush out concept drift
+    - cron: '0 0 * * *'
 
 jobs:
   train-cloud:
