@@ -100,7 +100,16 @@ async function fetchHistoricalData(symbol) {
     })).reverse();
 }
 
-// Model Training
+// Sub-Routines
+function evaluateRF(model, xTest, yTest) {
+    const preds = model.predict(xTest);
+    let correct = 0;
+    for (let i = 0; i < preds.length; i++) {
+        if (preds[i] === yTest[i]) correct++;
+    }
+    return correct / yTest.length;
+}
+
 function trainLogistic(featuresArr, symbol) {
     const X = [], y = [];
     for (const row of featuresArr) {
@@ -134,14 +143,37 @@ function trainRandomForest(featuresArr, symbol) {
         if (row.target_class == null) hasNull = true;
         if (!hasNull) { X.push(rowData); y.push(row.target_class); }
     }
+    
     const splitIdx = Math.floor(X.length * 0.8);
     const xTrain = X.slice(0, splitIdx);
     const yTrain = y.slice(0, splitIdx);
+    const xVal = X.slice(splitIdx);
+    const yVal = y.slice(splitIdx);
 
-    const options = { seed: 42, maxFeatures: 5, replacement: true, nEstimators: 50, treeOptions: { maxDepth: 6, minNumSamples: 10 }};
-    const model = new RFClassifier(options);
-    model.train(xTrain, yTrain);
-    return model.toJSON();
+    // Grid Search Auto-Tuner
+    const grids = [
+        { maxFeatures: 5, nEstimators: 50, treeOptions: { maxDepth: 4, minNumSamples: 10 } }, // Light structure (fast reacting)
+        { maxFeatures: 5, nEstimators: 100, treeOptions: { maxDepth: 6, minNumSamples: 10 } }, // Balanced architecture
+        { maxFeatures: 6, nEstimators: 150, treeOptions: { maxDepth: 8, minNumSamples: 5 } } // Deep geometry (heavy trends)
+    ];
+
+    let bestModel = null;
+    let bestAcc = -1;
+
+    console.log(`   └─ Grid Searching Hyperparameters...`);
+    for (const grid of grids) {
+        const model = new RFClassifier({ seed: 42, replacement: true, ...grid });
+        model.train(xTrain, yTrain);
+        const acc = evaluateRF(model, xVal, yVal);
+        
+        if (acc > bestAcc) {
+            bestAcc = acc;
+            bestModel = model;
+        }
+    }
+    
+    console.log(`   ✨ [Tuner Selected] Depth: ${bestModel.options.treeOptions.maxDepth} | Trees: ${bestModel.options.nEstimators} | Val Acc: ${(bestAcc*100).toFixed(1)}%`);
+    return bestModel.toJSON();
 }
 
 async function trainLSTM(featuresArr, symbol) {
@@ -183,11 +215,25 @@ async function trainLSTM(featuresArr, symbol) {
     const xValT = tf.tensor3d(X.slice(splitIdx));
     const yValT = tf.tensor2d(y.slice(splitIdx), [X.length - splitIdx, 1]);
 
+    // Asymmetric Label Penalization (Class Weighting)
+    const trainYArray = y.slice(0, splitIdx);
+    const count1 = trainYArray.filter(v => v === 1).length;
+    const count0 = trainYArray.length - count1;
+    
+    // Mathematically penalize the AI if it misses a high-quality Buy setup structure by artificially magnifying WIN targets.
+    const weight0 = 1.0;
+    const weight1 = count1 > 0 ? (count0 / count1) * 1.5 : 1.0;
+    
+    // Auto-Destruct fitting loop if model begins memorizing noise (Overfitting)
+    const earlyStopping = tf.callbacks.earlyStopping({ monitor: 'val_loss', patience: 5 });
+
     await model.fit(xTrainT, yTrainT, {
-        epochs: 30,
+        epochs: 50,
         batchSize: 128,
         validationData: [xValT, yValT],
-        shuffle: false
+        shuffle: false,
+        classWeight: { 0: weight0, 1: weight1 },
+        callbacks: [earlyStopping]
     });
 
     xTrainT.dispose(); yTrainT.dispose(); xValT.dispose(); yValT.dispose();

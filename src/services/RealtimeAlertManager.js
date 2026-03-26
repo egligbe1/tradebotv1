@@ -3,6 +3,7 @@ import { dataManager } from './DataManager.js';
 import { FeatureEngine } from './FeatureEngine.js';
 import { signalAggregator } from './SignalAggregator.js';
 import { telegramService } from './TelegramService.js';
+import { newsFilterService } from './NewsFilterService.js';
 
 export class RealtimeAlertManager {
   constructor() {
@@ -45,6 +46,13 @@ export class RealtimeAlertManager {
             const candles = dataManager.cache[sym];
             if (!candles || candles.length < 200) {
                console.error(`[AlertSentinel] Skipped ${sym}: Insufficient liquidity data.`);
+               continue;
+            }
+
+            // High-Impact Economic Evasion Kill Switch
+            const safeToTrade = await newsFilterService.isSafeToTrade(sym, 2); // 2 hours padding
+            if (!safeToTrade) {
+               console.log(`[AlertSentinel] Skipped ${sym}: Tier-1 News Volatility Blockade active.`);
                continue;
             }
 
