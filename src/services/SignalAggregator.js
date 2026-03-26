@@ -93,25 +93,17 @@ export class SignalAggregator {
 
     const finalScore = Object.values(scores).reduce((a, b) => a + b, 0);
     
-    // Institutional Filtering: High Conviction + Regime Alignment
+    // Retail Scalping Setup: Lowered Conviction to increase signal volume
     let masterSignal = 'HOLD';
-    const CONVICTION_THRESHOLD = 0.50; // Balanced from 0.65. Requires at least 2 models to agree.
+    const CONVICTION_THRESHOLD = 0.35; // Lowered from 0.50. Will trigger on LSTM alone.
 
     if (finalScore >= CONVICTION_THRESHOLD) {
-        // Only buy if Daily Trend (Regime) is bullish or neutral
-        if (latestRow.trend_regime >= -0.001) {
-            masterSignal = 'BUY';
-        } else {
-            console.log("Filtered BUY: Fighting daily bearish trend.");
-        }
+        masterSignal = 'BUY';
     } else if (finalScore <= -CONVICTION_THRESHOLD) {
-        // Only sell if Daily Trend (Regime) is bearish or neutral
-        if (latestRow.trend_regime <= 0.001) {
-            masterSignal = 'SELL';
-        } else {
-            console.log("Filtered SELL: Fighting daily bullish trend.");
-        }
-    }    const confidence = Math.min(Math.abs(finalScore) / Math.max(...Object.values(weights), 1.0), 1.0);
+        masterSignal = 'SELL';
+    }
+    
+    const confidence = Math.min(Math.abs(finalScore) / Math.max(...Object.values(weights), 1.0), 1.0);
 
     // Trade Parameters Calculation (ATR based)
     // entry = current price
