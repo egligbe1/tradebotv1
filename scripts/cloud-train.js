@@ -6,7 +6,6 @@ global.window = {};
 global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 
 import { createClient } from '@supabase/supabase-js';
-import fetch from 'node-fetch';
 import { FeatureEngine } from '../src/services/FeatureEngine.js';
 
 import { Matrix } from 'ml-matrix';
