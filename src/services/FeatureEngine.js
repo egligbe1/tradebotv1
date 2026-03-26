@@ -236,10 +236,10 @@ export class FeatureEngine {
         row.macd_hist_lag1 = i >= 1 ? features[i-1].macd_hist : null;
         row.macd_hist_lag2 = i >= 2 ? features[i-2].macd_hist : null;
 
-        // Relaxed mathematical targets to generate more frequent trade labels
+        // Targets (for historical training) - TRIPLE BARRIER METHOD
         const LOOKAHEAD = 24;
-        const TP_PCT = 0.0025; // 0.25% expected profit move (Down from 0.5%)
-        const SL_PCT = 0.0015; // 0.15% stop-loss buffer 
+        const TP_PCT = 0.005; // 0.5% Take Profit 
+        const SL_PCT = 0.002; // 0.2% Stop Loss 
         
         row.target_class = 0; // Default to HOLD/SELL
         
