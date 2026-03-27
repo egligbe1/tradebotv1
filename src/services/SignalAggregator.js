@@ -93,23 +93,23 @@ export class SignalAggregator {
 
     const finalScore = Object.values(scores).reduce((a, b) => a + b, 0);
     
-    // Institutional Filtering: High Conviction + Regime Alignment
+    // 'Swing Trader' Profile: Balanced Accuracy & Signal Flow
     let masterSignal = 'HOLD';
-    const CONVICTION_THRESHOLD = 0.50; // Balanced from 0.65. Requires at least 2 models to agree.
+    const CONVICTION_THRESHOLD = 0.45; // Relaxed from 0.50.
 
     if (finalScore >= CONVICTION_THRESHOLD) {
-        // Only buy if Daily Trend (Regime) is bullish or neutral
-        if (latestRow.trend_regime >= -0.001) {
+        // Buy if trend is bullish, neutral, or slightly pulling back
+        if (latestRow.trend_regime >= -0.003) {
             masterSignal = 'BUY';
         } else {
-            console.log("Filtered BUY: Fighting daily bearish trend.");
+            console.log("Filtered BUY: Fighting severe daily downtrend.");
         }
     } else if (finalScore <= -CONVICTION_THRESHOLD) {
-        // Only sell if Daily Trend (Regime) is bearish or neutral
-        if (latestRow.trend_regime <= 0.001) {
+        // Sell if trend is bearish, neutral, or slightly bouncing
+        if (latestRow.trend_regime <= 0.003) {
             masterSignal = 'SELL';
         } else {
-            console.log("Filtered SELL: Fighting daily bullish trend.");
+            console.log("Filtered SELL: Fighting severe daily uptrend.");
         }
     }    const confidence = Math.min(Math.abs(finalScore) / Math.max(...Object.values(weights), 1.0), 1.0);
 
