@@ -93,25 +93,27 @@ export class SignalAggregator {
 
     const finalScore = Object.values(scores).reduce((a, b) => a + b, 0);
     
-    // 'Swing Trader' Profile: Balanced Accuracy & Signal Flow
+    // Balanced Conviction: Strict enough for accuracy, relaxed enough for signals
     let masterSignal = 'HOLD';
-    const CONVICTION_THRESHOLD = 0.45; // Relaxed from 0.50.
+    const CONVICTION_THRESHOLD = 0.40; // Sweet spot: needs 2+ models agreeing
 
     if (finalScore >= CONVICTION_THRESHOLD) {
-        // Buy if trend is bullish, neutral, or slightly pulling back
-        if (latestRow.trend_regime >= -0.003) {
+        // Only block if trend is strongly bearish (soft filter)
+        if (latestRow.trend_regime >= -0.01) {
             masterSignal = 'BUY';
         } else {
-            console.log("Filtered BUY: Fighting severe daily downtrend.");
+            console.log("Filtered BUY: Fighting strong daily bearish trend.");
         }
     } else if (finalScore <= -CONVICTION_THRESHOLD) {
-        // Sell if trend is bearish, neutral, or slightly bouncing
-        if (latestRow.trend_regime <= 0.003) {
+        // Only block if trend is strongly bullish (soft filter)
+        if (latestRow.trend_regime <= 0.01) {
             masterSignal = 'SELL';
         } else {
-            console.log("Filtered SELL: Fighting severe daily uptrend.");
+            console.log("Filtered SELL: Fighting strong daily bullish trend.");
         }
-    }    const confidence = Math.min(Math.abs(finalScore) / Math.max(...Object.values(weights), 1.0), 1.0);
+    }
+
+    const confidence = Math.min(Math.abs(finalScore) / Math.max(...Object.values(weights), 1.0), 1.0);
 
     // Trade Parameters Calculation (ATR based)
     // entry = current price

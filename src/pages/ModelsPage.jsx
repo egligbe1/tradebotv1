@@ -4,7 +4,7 @@ import { dataManager } from '@/services/DataManager';
 import { FeatureEngine } from '@/services/FeatureEngine';
 import { signalAggregator } from '@/services/SignalAggregator';
 import { supabase } from '@/services/SyncManager';
-import { Brain, Play, Save, RefreshCw } from 'lucide-react';
+import { Brain, Play, Save, RefreshCw, Clock } from 'lucide-react';
 
 export default function ModelsPage() {
   const weights = useStore(state => state.modelWeights);
@@ -22,6 +22,24 @@ export default function ModelsPage() {
   });
 
   const [localWeights, setLocalWeights] = useState({ ...weights });
+  const [lastTrained, setLastTrained] = useState(null);
+
+  // Fetch the last trained timestamp from Supabase
+  useEffect(() => {
+    if (!supabase) return;
+    const fetchLastTrained = async () => {
+      try {
+        const { data } = await supabase
+          .from('model_sync')
+          .select('updated_at')
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .single();
+        if (data?.updated_at) setLastTrained(new Date(data.updated_at));
+      } catch (e) { /* table may not exist yet */ }
+    };
+    fetchLastTrained();
+  }, [trainingState.isTraining]);
 
   // Listen to remote cloud training progress via Supabase WebSockets
   useEffect(() => {
@@ -202,6 +220,12 @@ export default function ModelsPage() {
                  <span>Acc: {(trainingState.accuracy * 100).toFixed(1)}%</span>
                  <span>Seqs: {trainingState.sequences}</span>
               </div>
+               {lastTrained && (
+                  <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-border/50 text-xs text-muted-foreground">
+                     <Clock className="w-3.5 h-3.5" />
+                     <span>Last Trained: <strong className="text-foreground">{lastTrained.toLocaleString()}</strong></span>
+                  </div>
+               )}
            </div>
 
            <div className="flex flex-col gap-3">
