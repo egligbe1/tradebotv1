@@ -64,7 +64,14 @@ export class RealtimeAlertManager {
             
             if (signalData && signalData.signal !== 'HOLD') {
                 console.log(`[AlertSentinel] 🔥 HIGH CONVICTION SIGNAL CAUGHT for ${sym}: ${signalData.signal} 🔥`);
+                
+                // 1. Push to Telegram (Mobile)
                 await telegramService.sendAlert(sym, signalData);
+
+                // 2. Push to Browser (Desktop)
+                import('./NotificationManager.js').then(m => {
+                   m.notificationManager.notifySignal(signalData, sym);
+                });
             }
         } catch(e) {
             console.error(`[AlertSentinel] Engine error scanning ${sym}:`, e.message);

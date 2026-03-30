@@ -1,16 +1,21 @@
+import { useStore } from '../store/useStore.js';
+
 export class TelegramService {
   constructor() {
-    this.botToken = import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
-    this.chatId = import.meta.env.VITE_TELEGRAM_CHAT_ID;
-    this.enabled = !!(this.botToken && this.chatId);
+    // Service state managed via store in sendAlert
   }
 
   async sendAlert(symbol, signalData) {
-    if (!this.enabled || signalData.signal === 'HOLD') {
-       if (!this.enabled && signalData.signal !== 'HOLD') {
-           console.log(`[TelegramService] SKIPPED (Not configured): 🚨 ${signalData.signal} ${symbol}`);
-       }
-       return;
+    const { telegramBotToken, telegramChatId } = useStore.getState();
+    const activeToken = telegramBotToken || import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
+    const activeId = telegramChatId || import.meta.env.VITE_TELEGRAM_CHAT_ID;
+    const isConfigured = !!(activeToken && activeId);
+
+    if (!isConfigured || signalData.signal === 'HOLD') {
+        if (!isConfigured && signalData.signal !== 'HOLD') {
+            console.log(`[TelegramService] SKIPPED (Not configured): 🚨 ${signalData.signal} ${symbol}`);
+        }
+        return;
     }
 
     const action = signalData.signal === 'BUY' ? '🟢 BUY' : '🔴 SELL';
@@ -31,14 +36,14 @@ export class TelegramService {
 _Models Aligned: Rule Engine, LSTM, RF, Logistic Regression_
 _Trend Filter: Aligned with Daily 200 EMA_`;
 
-    const url = `https://api.telegram.org/bot${this.botToken}/sendMessage`;
+    const url = `https://api.telegram.org/bot${activeToken}/sendMessage`;
     
     try {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          chat_id: this.chatId,
+          chat_id: activeId,
           text: message,
           parse_mode: 'Markdown'
         })

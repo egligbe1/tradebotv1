@@ -33,11 +33,13 @@ export class NotificationManager {
   /**
    * Emits a system notification for a trading signal
    * @param {Object} signalObj 
+   * @param {String} overrideSymbol
    */
-  notifySignal(signalObj) {
-     if (!this.granted || !signalObj || signalObj.signal === 'HOLD') return;
+  notifySignal(signalObj, overrideSymbol = null) {
+     const { enableBrowserNotifications, symbol: globalSymbol } = useStore.getState();
+     if (!this.granted || !enableBrowserNotifications || !signalObj || signalObj.signal === 'HOLD') return;
 
-     const symbol = useStore.getState().symbol;
+     const symbol = overrideSymbol || globalSymbol;
      const title = `🚨 TradeBot: ${symbol} ${signalObj.signal}`;
      const body = `Confidence: ${(signalObj.confidence * 100).toFixed(0)}%\nEntry: ${signalObj.entry}\nSL: ${signalObj.stop_loss}`;
      

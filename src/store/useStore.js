@@ -10,6 +10,15 @@ export const useStore = create(
       apiKey: import.meta.env.VITE_TWELVE_DATA_API_KEY || '',
       setApiKey: (key) => set({ apiKey: key }),
 
+      telegramBotToken: '',
+      setTelegramBotToken: (token) => set({ telegramBotToken: token }),
+
+      telegramChatId: '',
+      setTelegramChatId: (id) => set({ telegramChatId: id }),
+
+      enableBrowserNotifications: false,
+      setEnableBrowserNotifications: (enabled) => set({ enableBrowserNotifications: enabled }),
+
       symbol: 'EUR/USD',
       setSymbol: (sym) => set({ symbol: sym }),
 
