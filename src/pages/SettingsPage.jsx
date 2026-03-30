@@ -1,7 +1,7 @@
 import { useStore } from '@/store/useStore';
 import { notificationManager } from '@/services/NotificationManager';
 import { telegramService } from '@/services/TelegramService';
-import { Bell, Send, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Bell, Send, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 import React, { useState } from 'react';
 
 export default function SettingsPage() {
