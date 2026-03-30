@@ -1,38 +1,86 @@
 import React, { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { dataManager } from '@/services/DataManager';
-import { Database, ShieldAlert } from 'lucide-react';
+import { AVAILABLE_SYMBOLS } from '@/store/useStore';
+import { Database, ShieldAlert, RefreshCw, Trash2, CheckCircle, Loader2 } from 'lucide-react';
 
 export default function MonitorPage() {
   const [logs, setLogs] = useState([]);
   const [stats, setStats] = useState({ limit: 750, used: 0, candleCacheSize: 0 });
+  const [syncStatus, setSyncStatus] = useState({ active: false, current: '', progress: 0 });
+
+  const loadMonitor = async () => {
+      // Query used calls today
+      const used = dataManager.getDailyCallCount();
+      
+      // Query Dexie Cache Size
+      const candleCacheSize = await dataManager.db.candles.count();
+      
+      // Query Dexie Logs
+      const rawLogs = await dataManager.db.callLog.orderBy('id').reverse().limit(50).toArray();
+      
+      setStats({ limit: 750, used, candleCacheSize });
+      setLogs(rawLogs);
+  };
 
   useEffect(() => {
-     const loadMonitor = async () => {
-         // Query used calls today
-         const used = dataManager.getDailyCallCount();
-         
-         // Query Dexie Cache Size
-         const candleCacheSize = await dataManager.db.candles.count();
-         
-         // Query Dexie Logs
-         const rawLogs = await dataManager.db.callLog.orderBy('id').reverse().limit(50).toArray();
-         
-         setStats({ limit: 750, used, candleCacheSize });
-         setLogs(rawLogs);
-     };
-
      loadMonitor();
      const interval = setInterval(loadMonitor, 5000); // Polling for live updates
      return () => clearInterval(interval);
   }, []);
+
+  const handleDeepSync = async () => {
+     if (!confirm("This will purge all local data and pull 5,000 fresh candles for EVERY asset. This takes ~1 minute to respect API limits. Proceed?")) return;
+     
+     setSyncStatus({ active: true, current: 'Purging Cache...', progress: 0 });
+     await dataManager.clearCache();
+     await loadMonitor();
+
+     for (let i = 0; i < AVAILABLE_SYMBOLS.length; i++) {
+        const symbol = AVAILABLE_SYMBOLS[i];
+        setSyncStatus({ active: true, current: `Syncing ${symbol}...`, progress: Math.round(((i) / AVAILABLE_SYMBOLS.length) * 100) });
+        try {
+           await dataManager.fetchHighFidelityHistory(symbol);
+           await loadMonitor();
+        } catch (e) {
+           console.error(`Sync failed for ${symbol}:`, e.message);
+        }
+     }
+
+     setSyncStatus({ active: false, current: 'Sync Complete', progress: 100 });
+     alert("Full Institutional Sync Complete! Your models are now running on high-fidelity historical data.");
+  };
 
   const gaugePercent = Math.min((stats.used / stats.limit) * 100, 100);
   const chartData = [{ name: 'Remaining', value: stats.limit - stats.used }, { name: 'Used', value: stats.used }];
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold">API Monitor & Telemetry</h1>
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold">API Monitor & Telemetry</h1>
+          <p className="text-muted-foreground text-sm">Monitor credits and manage local database health.</p>
+        </div>
+        
+        <div className="flex gap-3">
+           {syncStatus.active && (
+              <div className="flex items-center gap-3 bg-primary/10 border border-primary/20 px-4 py-2 rounded-lg animate-pulse">
+                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                <div className="text-sm font-medium">
+                   {syncStatus.current} ({syncStatus.progress}%)
+                </div>
+              </div>
+           )}
+           <button 
+             onClick={handleDeepSync}
+             disabled={syncStatus.active}
+             className="flex items-center gap-2 bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20 px-4 py-2 rounded-lg text-sm font-bold transition-all disabled:opacity-50"
+           >
+             <Trash2 size={16} />
+             Purge & Deep Sync
+           </button>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
          {/* Usage Gauge */}

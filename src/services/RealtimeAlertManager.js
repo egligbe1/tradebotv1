@@ -4,6 +4,12 @@ import { FeatureEngine } from './FeatureEngine.js';
 import { signalAggregator } from './SignalAggregator.js';
 import { telegramService } from './TelegramService.js';
 import { newsFilterService } from './NewsFilterService.js';
+import { createClient } from '@supabase/supabase-js';
+import { tradeManager } from './TradeManager.js';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 export class RealtimeAlertManager {
   constructor() {
@@ -42,8 +48,12 @@ export class RealtimeAlertManager {
     
     for (const sym of AVAILABLE_SYMBOLS) {
         try {
-            await dataManager.getCandles(sym, '1h', 250); // 200 required for EMA200 regime filter
-            const candles = dataManager.cache[sym];
+            const res1h = await dataManager.getCandles(sym, '1h', 250); 
+            const res4h = await dataManager.getCandles(sym, '4h', 250); // For macro trend
+            
+            const candles = res1h.values;
+            const macroCandles = res4h.values;
+
             if (!candles || candles.length < 200) {
                console.error(`[AlertSentinel] Skipped ${sym}: Insufficient liquidity data.`);
                continue;
@@ -57,18 +67,35 @@ export class RealtimeAlertManager {
             }
 
             const features = FeatureEngine.extractFeatures(candles);
-            const currentPrice = candles[0].close;
+            const currentPrice = candles[candles.length - 1].close;
+
+            // 0. Manage existing open trades (Breakeven/Exit)
+            await tradeManager.manageOpenTrades(sym, currentPrice);
             
-            // Execute institutional-grade cross-model alignment verify
-            const signalData = await signalAggregator.generateSignal(features, currentPrice);
+            // Execute institutional-grade cross-model alignment verify with Macro confirmation
+            const signalData = await signalAggregator.generateSignal(features, currentPrice, macroCandles);
             
             if (signalData && signalData.signal !== 'HOLD') {
                 console.log(`[AlertSentinel] 🔥 HIGH CONVICTION SIGNAL CAUGHT for ${sym}: ${signalData.signal} 🔥`);
                 
-                // 1. Push to Telegram (Mobile)
+                // 1. Log to institutional portfolio (Supabase)
+                try {
+                    await supabase.from('trades').insert({
+                        symbol: sym,
+                        side: signalData.signal,
+                        entry_price: signalData.entry,
+                        sl_price: signalData.stop_loss,
+                        tp_price: signalData.take_profit_1,
+                        status: 'OPEN'
+                    });
+                } catch (dbErr) {
+                    console.error("[AlertSentinel] Failed to log trade to Supabase:", dbErr.message);
+                }
+
+                // 2. Push to Telegram (Mobile)
                 await telegramService.sendAlert(sym, signalData);
 
-                // 2. Push to Browser (Desktop)
+                // 3. Push to Browser (Desktop)
                 import('./NotificationManager.js').then(m => {
                    m.notificationManager.notifySignal(signalData, sym);
                 });

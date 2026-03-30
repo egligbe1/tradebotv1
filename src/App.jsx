@@ -11,15 +11,19 @@ import ModelsPage from '@/pages/ModelsPage';
 import HistoryPage from '@/pages/HistoryPage';
 import MonitorPage from '@/pages/MonitorPage';
 import SettingsPage from '@/pages/SettingsPage';
+import BacktestPage from '@/pages/BacktestPage';
+import PortfolioPage from '@/pages/PortfolioPage';
 
 // Icons
-import { LayoutDashboard, LineChart, BrainCircuit, History, Activity, Settings, Menu } from 'lucide-react';
+import { LayoutDashboard, LineChart, BrainCircuit, History, Activity, Settings, Menu, TrendingUp, Briefcase } from 'lucide-react';
 
 const NAV_ITEMS = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/chart', label: 'Chart', icon: LineChart },
   { path: '/models', label: 'Models', icon: BrainCircuit },
   { path: '/history', label: 'History', icon: History },
+  { path: '/backtest', label: 'Backtest', icon: TrendingUp },
+  { path: '/portfolio', label: 'Portfolio', icon: Briefcase },
   { path: '/monitor', label: 'API Monitor', icon: Activity },
   { path: '/settings', label: 'Settings', icon: Settings },
 ];
@@ -132,6 +136,8 @@ function App() {
             <Route path="/chart" element={<ErrorBoundary><ChartPage /></ErrorBoundary>} />
             <Route path="/models" element={<ErrorBoundary><ModelsPage /></ErrorBoundary>} />
             <Route path="/history" element={<ErrorBoundary><HistoryPage /></ErrorBoundary>} />
+            <Route path="/backtest" element={<ErrorBoundary><BacktestPage /></ErrorBoundary>} />
+            <Route path="/portfolio" element={<ErrorBoundary><PortfolioPage /></ErrorBoundary>} />
             <Route path="/monitor" element={<ErrorBoundary><MonitorPage /></ErrorBoundary>} />
             <Route path="/settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />
           </Routes>

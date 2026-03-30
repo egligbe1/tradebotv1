@@ -352,4 +352,43 @@ export class FeatureEngine {
 
     return features;
   }
+
+  /**
+   * Enriches 1h features with a Macro Trend filter from 4h data
+   * @param {Array} features - The 1h feature array
+   * @param {Array} macroCandles - The 4h candles
+   */
+  static enrichWithMacroTrend(features, macroCandles) {
+    if (!macroCandles || macroCandles.length < 200) return features;
+
+    const macroCloses = macroCandles.map(c => c.close);
+    const macroEma200 = ema({ period: 200, values: macroCloses });
+    
+    // Create a lookup for macro status by hour/date
+    const macroMap = new Map();
+    for (let i = 0; i < macroCandles.length; i++) {
+        const c = macroCandles[i];
+        const emaVal = i >= 199 ? macroEma200[i - 199] : null;
+        if (emaVal) {
+            macroMap.set(c.datetime, c.close > emaVal ? 1 : -1);
+        }
+    }
+
+    // Align 1h features with the most recent 4h bucket
+    for (const row of features) {
+        // Find the nearest 4h bucket (Twelve Data 4h candles end on 0, 4, 8, 12, 16, 20)
+        // Or we just find the largest macro datetime that is <= row.datetime
+        let macroStatus = 0;
+        let bestMacroDt = "";
+        
+        for (const mDt of macroMap.keys()) {
+            if (mDt <= row.datetime && mDt > bestMacroDt) {
+                bestMacroDt = mDt;
+                macroStatus = macroMap.get(mDt);
+            }
+        }
+        row.macro_trend = macroStatus;
+    }
+    return features;
+  }
 }

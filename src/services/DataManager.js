@@ -226,6 +226,23 @@ class DataManager {
 
     return apiData;
   }
+  /**
+   * Clears the entire candle cache to allow for a fresh start.
+   */
+  async clearCache() {
+    console.log("[DataManager] Purging candle cache...");
+    await this.db.candles.clear();
+    this.memCache.clear();
+    console.log("[DataManager] Cache cleared successfully.");
+  }
+
+  /**
+   * Fetches the maximum allowable history (5,000 candles) for a symbol to maximize AI accuracy.
+   */
+  async fetchHighFidelityHistory(symbol, interval = '1h') {
+    console.log(`[DataManager] Deep fetching 5,000 candles for ${symbol}...`);
+    return await this.getCandles(symbol, interval, 5000);
+  }
 }
 
 export const dataManager = new DataManager();

@@ -11,6 +11,11 @@ const PORT = process.env.PORT || 3000;
 // Serve static files from the dist directory
 app.use(express.static(path.join(__dirname, 'dist')));
 
+// Health check endpoint for keep-alive services (e.g. cron-job.org)
+app.get('/ping', (req, res) => {
+  res.send('OK');
+});
+
 // Serve index.html for all other routes to support React Router
 app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));

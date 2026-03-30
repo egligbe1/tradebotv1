@@ -36,7 +36,6 @@ const FEATURES_22 = [
   'dist_to_support', 'dist_to_resistance', 'pivot_dist', 
   'trigger_engulfing', 'trigger_pinbar', 'trend_regime', 'trend_strength'
 ];
-const LOOKBACK = 24;
 
 if (!supabaseUrl || !supabaseKey || !twelveDataKey) {
   console.error("❌ Missing required environment variables!");
@@ -50,7 +49,6 @@ const supabase = createClient(supabaseUrl, supabaseKey);
  */
 class CloudSignalAggregator {
   async evaluate(symbol, latestFeature) {
-    // 1. Fetch latest weights from Supabase
     const { data: weightsData, error } = await supabase
       .from('model_sync')
       .select('*')
@@ -65,8 +63,6 @@ class CloudSignalAggregator {
     weightsData.forEach(w => { models[w.model_name] = w.weights; });
 
     let probs = [];
-
-    // Logistic
     if (models.logistic) {
       const { theta } = models.logistic;
       let z = theta[0]; 
@@ -76,56 +72,94 @@ class CloudSignalAggregator {
       probs.push(1 / (1 + Math.exp(-z)));
     }
 
-    // RF
     if (models.randomforest) {
       const rf = RFClassifier.fromJSON(models.randomforest);
       const rowData = FEATURES_22.map(f => latestFeature[f] || 0);
       probs.push(rf.predictProbability([rowData], 1)[0]);
     }
 
-    // LSTM (Complex due to 3D tensor requirement)
-    if (models.lstm && tf) {
-        try {
-            // This is simplified; in a production-ready sentinel we'd want to handle the 3D tensor sequence
-            // For now, we'll rely on the weighted consensus of Logistic + RF if LSTM is too heavy for a quick script
-        } catch(e) {}
-    }
-
     const meanProb = probs.reduce((a, b) => a + b, 0) / probs.length;
     const conviction = Math.abs(meanProb - 0.5) * 2;
     const signal = meanProb > 0.55 ? 'BUY' : (meanProb < 0.45 ? 'SELL' : 'HOLD');
     
-    return { signal, confidence: conviction, entry: latestFeature.close };
+    const atr = latestFeature.atr || 0.0012;
+    return { 
+        signal, 
+        confidence: conviction, 
+        entry: latestFeature.close,
+        sl: signal === 'BUY' ? latestFeature.close - (atr * 2.5) : latestFeature.close + (atr * 2.5),
+        tp: signal === 'BUY' ? latestFeature.close + (atr * 4.0) : latestFeature.close - (atr * 4.0)
+    };
   }
+}
+
+async function logTrade(symbol, signalData) {
+    try {
+        await supabase.from('trades').insert({
+            symbol,
+            side: signalData.signal,
+            entry_price: signalData.entry,
+            sl_price: signalData.sl,
+            tp_price: signalData.tp,
+            status: 'OPEN'
+        });
+        console.log(`[Sentinel] 📝 Trade logged for ${symbol}`);
+    } catch (e) {
+        console.error(`[Sentinel] ❌ Log failed:`, e.message);
+    }
+}
+
+async function manageOpenTrades(symbol, currentPrice) {
+    try {
+        const { data: openTrades } = await supabase.from('trades').select('*').eq('symbol', symbol).eq('status', 'OPEN');
+        if (!openTrades) return;
+
+        for (const trade of openTrades) {
+            const risk = Math.abs(trade.entry_price - trade.sl_price);
+            const pnl = trade.side === 'BUY' ? (currentPrice - trade.entry_price) : (trade.entry_price - currentPrice);
+
+            if (pnl >= risk && trade.sl_price !== trade.entry_price) {
+                console.log(`[Sentinel] ${symbol} -> BREAKEVEN`);
+                await supabase.from('trades').update({ sl_price: trade.entry_price }).eq('id', trade.id);
+            }
+
+            let exit = false;
+            let finalPnl = 0;
+            if (trade.side === 'BUY') {
+                if (currentPrice <= trade.sl_price) { exit = true; finalPnl = ((trade.sl_price - trade.entry_price) / trade.entry_price) * 100; }
+                else if (currentPrice >= trade.tp_price) { exit = true; finalPnl = ((trade.tp_price - trade.entry_price) / trade.entry_price) * 100; }
+            } else {
+                if (currentPrice >= trade.sl_price) { exit = true; finalPnl = ((trade.entry_price - trade.sl_price) / trade.entry_price) * 100; }
+                else if (currentPrice <= trade.tp_price) { exit = true; finalPnl = ((trade.entry_price - trade.tp_price) / trade.entry_price) * 100; }
+            }
+
+            if (exit) {
+                await supabase.from('trades').update({ status: 'CLOSED', pnl: finalPnl, closed_at: new Date().toISOString() }).eq('id', trade.id);
+            }
+        }
+    } catch (e) {}
 }
 
 async function sendTelegram(symbol, signalData) {
    if (!botToken || !chatId || signalData.signal === 'HOLD') return;
-
-   const activeId = chatId;
    const action = signalData.signal === 'BUY' ? '🟢 BUY' : '🔴 SELL';
-   const conf = (signalData.confidence * 100).toFixed(1);
-   
    const message = `
 <b>🚨 CLOUD SENTINEL ALERT 🚨</b>
 <b>Asset:</b> ${symbol}
 <b>Action:</b> ${action}
-<b>Conviction:</b> ${conf}%
+<b>Conviction:</b> ${(signalData.confidence * 100).toFixed(1)}%
 
-<b>Entry:</b> ${signalData.entry}
-<i>Status: Autonomous Cloud Signal detected via GitHub Actions.</i>`;
+<b>Entry:</b> ${signalData.entry.toFixed(5)}
+<b>SL/TP:</b> ${signalData.sl.toFixed(5)} / ${signalData.tp.toFixed(5)}
+<i>Status: Unified Portfolio Sync Active.</i>`;
 
-   const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
    try {
-     const res = await fetch(url, {
+     await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
        method: 'POST',
        headers: { 'Content-Type': 'application/json' },
-       body: JSON.stringify({ chat_id: activeId, text: message, parse_mode: 'HTML' })
+       body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' })
      });
-     if (res.ok) console.log(`[Sentinel] ✅ Alert sent for ${symbol}`);
-   } catch(e) {
-     console.error(`[Sentinel] ❌ Failed to send Telegram:`, e.message);
-   }
+   } catch(e) {}
 }
 
 async function runSentinel() {
@@ -134,31 +168,27 @@ async function runSentinel() {
 
     for (const sym of AVAILABLE_SYMBOLS) {
         try {
-            const url = `https://api.twelvedata.com/time_series?symbol=${sym}&interval=1h&outputsize=510&apikey=${twelveDataKey}`;
-            const res = await fetch(url);
-            const data = await res.json();
-            
-            if (!data.values || data.status === 'error') throw new Error(data.message);
+            const url1h = `https://api.twelvedata.com/time_series?symbol=${sym}&interval=1h&outputsize=250&apikey=${twelveDataKey}`;
+            const url4h = `https://api.twelvedata.com/time_series?symbol=${sym}&interval=4h&outputsize=250&apikey=${twelveDataKey}`;
+            const [r1, r4] = await Promise.all([fetch(url1h), fetch(url4h)]);
+            const [d1, d4] = await Promise.all([r1.json(), r4.json()]);
 
-            const candles = data.values.map(d => ({
-                open: parseFloat(d.open), high: parseFloat(d.high),
-                low: parseFloat(d.low), close: parseFloat(d.close)
-            })).reverse();
+            const c1h = d1.values.map(v => ({ datetime: v.datetime, open: parseFloat(v.open), high: parseFloat(v.high), low: parseFloat(v.low), close: parseFloat(v.close) })).reverse();
+            const c4h = d4.values.map(v => ({ datetime: v.datetime, open: parseFloat(v.open), high: parseFloat(v.high), low: parseFloat(v.low), close: parseFloat(v.close) })).reverse();
 
-            const features = FeatureEngine.extractFeatures(candles);
-            const latest = features[features.length - 1];
+            const features = FeatureEngine.extractFeatures(c1h);
+            const latest = FeatureEngine.enrichWithMacroTrend(features, c4h).pop();
+
+            await manageOpenTrades(sym, latest.close);
 
             const result = await aggregator.evaluate(sym, latest);
             if (result && result.signal !== 'HOLD' && result.confidence > 0.45) {
+                if ((result.signal === 'BUY' && latest.macro_trend === -1) || (result.signal === 'SELL' && latest.macro_trend === 1)) continue;
+                await logTrade(sym, result);
                 await sendTelegram(sym, result);
-            } else {
-                console.log(`[Sentinel] ${sym}: Neutral (${(result?.confidence * 100 || 0).toFixed(1)}% conviction)`);
             }
-        } catch(e) {
-            console.error(`[Sentinel] Error scanning ${sym}:`, e.message);
-        }
+        } catch(e) { console.error(`[Sentinel] ${sym} Error:`, e.message); }
     }
-    console.log("🏁 [Sentinel] Cycle complete.");
     process.exit(0);
 }
 

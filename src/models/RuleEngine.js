@@ -24,6 +24,7 @@ export class RuleEngine {
     if (latestRow.close > latestRow.ema50) buyScore += 1; // Price above EMA50
     if (latestRow.bb_pct_b !== null && latestRow.bb_pct_b < 0.2) buyScore += 1; // Near lower band
     if (latestRow.ema9_gt_21 === 1) buyScore += 1; // Upward cross or bullish EMA alignment
+    if (latestRow.macro_trend === 1) buyScore += 1; // Macro Bullish Alignment (4H)
     
     // Stochastic oversold cross
     if (latestRow.stoch_k > latestRow.stoch_d && latestRow.stoch_d < 20) buyScore += 1;
@@ -51,6 +52,7 @@ export class RuleEngine {
     if (latestRow.close < latestRow.ema50) sellScore += 1; // Price below EMA50
     if (latestRow.bb_pct_b !== null && latestRow.bb_pct_b > 0.8) sellScore += 1; // Near upper band
     if (latestRow.ema9_gt_21 === 0) sellScore += 1; // Downward cross or bearish EMA alignment
+    if (latestRow.macro_trend === -1) sellScore += 1; // Macro Bearish Alignment (4H)
     
     // Stochastic overbought cross
     if (latestRow.stoch_k < latestRow.stoch_d && latestRow.stoch_d > 80) sellScore += 1;

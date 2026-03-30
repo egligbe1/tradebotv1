@@ -1,134 +1,149 @@
-import { FeatureEngine } from '@/services/FeatureEngine';
-import { signalAggregator } from '@/services/SignalAggregator';
+import { FeatureEngine } from './FeatureEngine.js';
+import { signalAggregator } from './SignalAggregator.js';
 
 export class BacktestEngine {
-  constructor() {
-    this.name = 'BacktestEngine';
-  }
-
   /**
-   * Run a historical simulation over a set of candles
-   * @param {Array} candles - Array of OHLCV candles
+   * Runs a historical simulation on a symbol
+   * @param {string} symbol - e.g. "EUR/USD"
+   * @param {Array} candles1h - Array of 1h candles
+   * @param {Array} candles4h - Array of 4h candles
+   * @param {number} initialBalance - Starting capital (default 10000)
+   * @param {number} riskPerTrade - % of balance to risk (default 1)
    */
-  async runBacktest(candles) {
-    if (!candles || candles.length < 200) {
-       throw new Error("Insufficient candles for backtesting. Minimum 200 required for feature warmup.");
+  async run(symbol, candles1h, candles4h, initialBalance = 10000, riskPerTrade = 0.01) {
+    if (!candles1h || candles1h.length < 300) {
+      throw new Error("Insufficient history for backtesting (need 300+ 1H candles)");
     }
+
+    console.log(`[BacktestEngine] 🧪 Starting simulation for ${symbol} on ${candles1h.length} candles...`);
+
+    // 1. Prepare Features (Offline static prep)
+    const features1h = FeatureEngine.extractFeatures(candles1h);
+    FeatureEngine.enrichWithMacroTrend(features1h, candles4h);
 
     const trades = [];
-    const minLookback = 50; // LSTM needs 24 seq, FeatureEngine needs ~33. Let's start trading at index 50
-    let equity = 100.0; // Starting unit
-    const equityCurve = [{ index: 0, equity: 100.0 }];
-
-    // We pre-calculate all features, but feed them to aggregator sequentially
-    const allFeatures = FeatureEngine.extractFeatures(candles);
-
+    let balance = initialBalance;
+    let equityCurve = [{ time: features1h[0].datetime, value: initialBalance }];
     let activeTrade = null;
 
-    // Simulate stepping through time
-    for (let i = minLookback; i < candles.length; i++) {
-       const currentCandle = candles[i];
-       
-       // 1. Manage existing trade if open
-       if (activeTrade) {
-           let closed = false;
-           let exitPrice = 0;
-           let pnl = 0;
-           
-           if (activeTrade.side === 'BUY') {
-              if (currentCandle.low <= activeTrade.stopLoss) {
-                 closed = true;
-                 exitPrice = activeTrade.stopLoss;
-                 pnl = -1.0; // 1 Risk Unit lost
-                 activeTrade.result = 'LOSS';
-              } else if (currentCandle.high >= activeTrade.takeProfit1) {
-                 closed = true;
-                 exitPrice = activeTrade.takeProfit1;
-                 pnl = 2.0; // 2 Risk Units gained (1:2 RR)
-                 activeTrade.result = 'WIN';
-              }
-           } else if (activeTrade.side === 'SELL') {
-              if (currentCandle.high >= activeTrade.stopLoss) {
-                 closed = true;
-                 exitPrice = activeTrade.stopLoss;
-                 pnl = -1.0;
-                 activeTrade.result = 'LOSS';
-              } else if (currentCandle.low <= activeTrade.takeProfit1) {
-                 closed = true;
-                 exitPrice = activeTrade.takeProfit1;
-                 pnl = 2.0;
-                 activeTrade.result = 'WIN';
-              }
-           }
+    // Start from index 200 to ensure EMAs are warm
+    for (let i = 200; i < features1h.length; i++) {
+      const currentBar = features1h[i];
+      const prevBar = features1h[i - 1];
 
-           if (closed) {
-               activeTrade.exitPrice = exitPrice;
-               activeTrade.exitTime = currentCandle.datetime;
-               activeTrade.pnlUnits = pnl;
-               equity += pnl;
-               equityCurve.push({ index: i, equity, time: currentCandle.datetime });
-               trades.push(activeTrade);
-               activeTrade = null;
-               // Skip generating a new signal on the exit candle to simulate reaction delay
-               continue; 
-           }
-       }
+      // A. Check if active trade was hit
+      if (activeTrade) {
+        const high = currentBar.high;
+        const low = currentBar.low;
+        
+        let exitPrice = null;
+        let result = null;
 
-       // 2. Generate new signal if no active trade
-       if (!activeTrade) {
-           // Provide features UP TO this point in time
-           const featuresUpToNow = allFeatures.slice(0, i + 1);
-           
-           // Await the signal (Note: this is heavy in a loop for LSTM, but it's a browser-side backtest)
-           const signalObj = await signalAggregator.generateSignal(featuresUpToNow, currentCandle.close);
+        if (activeTrade.side === 'BUY') {
+          if (low <= activeTrade.sl) {
+            exitPrice = activeTrade.sl;
+            result = 'LOSS';
+          } else if (high >= activeTrade.tp) {
+            exitPrice = activeTrade.tp;
+            result = 'WIN';
+          }
+        } else {
+          if (high >= activeTrade.sl) {
+            exitPrice = activeTrade.sl;
+            result = 'LOSS';
+          } else if (low <= activeTrade.tp) {
+            exitPrice = activeTrade.tp;
+            result = 'WIN';
+          }
+        }
 
-           if (signalObj && (signalObj.signal === 'BUY' || signalObj.signal === 'SELL')) {
-               activeTrade = {
-                  id: i,
-                  entryTime: currentCandle.datetime,
-                  side: signalObj.signal,
-                  entryPrice: currentCandle.close,
-                  stopLoss: signalObj.stop_loss,
-                  takeProfit1: signalObj.take_profit_1,
-                  confidence: signalObj.confidence,
-                  status: 'OPEN'
-               };
-           }
-       }
+        if (exitPrice) {
+          const pnlPercent = activeTrade.side === 'BUY' 
+            ? (exitPrice - activeTrade.entry) / activeTrade.entry
+            : (activeTrade.entry - exitPrice) / activeTrade.entry;
+          
+          const pnlCash = activeTrade.positionSize * pnlPercent;
+          balance += pnlCash;
+          
+          trades.push({
+            ...activeTrade,
+            exit: exitPrice,
+            exitTime: currentBar.datetime,
+            result,
+            pnlCash,
+            pnlPercent: pnlPercent * 100,
+            finalBalance: balance
+          });
+          
+          activeTrade = null;
+        }
+      }
+
+      // B. Scan for New Signals (only if no active trade)
+      if (!activeTrade) {
+        // We only look at features up to index i to avoid look-ahead bias
+        const subFeatures = features1h.slice(0, i + 1);
+        const signalResult = await signalAggregator.generateSignal(subFeatures, currentBar.close);
+
+        if (signalResult && signalResult.signal !== 'HOLD') {
+          // Dynamic Risk Management
+          const dollarRisk = balance * riskPerTrade;
+          const stopDist = Math.abs(currentBar.close - signalResult.stop_loss);
+          const positionSize = stopDist > 0 ? dollarRisk / (stopDist / currentBar.close) : balance;
+
+          activeTrade = {
+            symbol,
+            side: signalResult.signal,
+            entry: currentBar.close,
+            entryTime: currentBar.datetime,
+            sl: signalResult.stop_loss,
+            tp: signalResult.take_profit_1,
+            positionSize,
+            confidence: signalResult.confidence
+          };
+        }
+      }
+
+      equityCurve.push({ time: currentBar.datetime, value: balance });
     }
 
-    // Force close active trade at end of simulation if still open
-    if (activeTrade) {
-        activeTrade.result = 'OPEN (EOD)';
-        activeTrade.pnlUnits = 0;
-        trades.push(activeTrade);
-    }
-
-    // Calculate metrics
-    const completedTrades = trades.filter(t => t.result === 'WIN' || t.result === 'LOSS');
-    const wins = completedTrades.filter(t => t.result === 'WIN').length;
-    const losses = completedTrades.filter(t => t.result === 'LOSS').length;
+    // C. Calculate Metrics
+    const winRate = trades.length > 0 
+      ? (trades.filter(t => t.result === 'WIN').length / trades.length) * 100 
+      : 0;
     
-    // Drawdown calculation
-    let peak = 100.0;
-    let maxDrawdown = 0;
-    equityCurve.forEach(point => {
-        if (point.equity > peak) peak = point.equity;
-        const dd = (peak - point.equity) / peak;
-        if (dd > maxDrawdown) maxDrawdown = dd;
-    });
+    const profitFactor = this._calculateProfitFactor(trades);
+    const maxDrawdown = this._calculateMaxDrawdown(equityCurve);
 
     return {
-        trades,
-        equityCurve,
-        metrics: {
-            totalTrades: completedTrades.length,
-            winRate: completedTrades.length > 0 ? (wins / completedTrades.length) : 0,
-            netUnits: equity - 100.0,
-            maxDrawdown: maxDrawdown,
-            profitFactor: losses > 0 ? ((wins * 2.0) / (losses * 1.0)) : (wins > 0 ? 99 : 0) // Assume RR 1:2
-        }
+      symbol,
+      initialBalance,
+      finalBalance: balance,
+      totalReturn: ((balance - initialBalance) / initialBalance) * 100,
+      tradesCount: trades.length,
+      winRate,
+      profitFactor,
+      maxDrawdown,
+      trades,
+      equityCurve
     };
+  }
+
+  _calculateProfitFactor(trades) {
+    const grossProfit = trades.filter(t => t.pnlCash > 0).reduce((a, b) => a + b.pnlCash, 0);
+    const grossLoss = Math.abs(trades.filter(t => t.pnlCash < 0).reduce((a, b) => a + b.pnlCash, 0));
+    return grossLoss === 0 ? grossProfit : grossProfit / grossLoss;
+  }
+
+  _calculateMaxDrawdown(equityCurve) {
+    let peak = -Infinity;
+    let maxDd = 0;
+    for (const point of equityCurve) {
+      if (point.value > peak) peak = point.value;
+      const dd = (peak - point.value) / peak;
+      if (dd > maxDd) maxDd = dd;
+    }
+    return maxDd * 100;
   }
 }
 

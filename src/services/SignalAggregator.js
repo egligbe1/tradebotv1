@@ -59,9 +59,16 @@ export class SignalAggregator {
    * Generates a combined signal from all 4 models
    * @param {Array} features - Array of feature rows (chronological) 
    * @param {Object} currentPrice - Current price object (close, high, low, etc)
+   * @param {Array} macroCandles - Optional 4h candles for macro filter
    */
-  async generateSignal(features, currentPrice) {
+  async generateSignal(features, currentPrice, macroCandles = null) {
     if (!features || features.length === 0) return null;
+
+    // MTF Enrichment if macro data provided
+    if (macroCandles) {
+        const { FeatureEngine } = await import('./FeatureEngine.js');
+        FeatureEngine.enrichWithMacroTrend(features, macroCandles);
+    }
     
     // We get the weights/symbol dynamically from Zustand
     const weights = useStore.getState().modelWeights;

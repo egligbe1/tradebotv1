@@ -35,8 +35,22 @@ CREATE TABLE IF NOT EXISTS public.training_status (
     updated_at timestamptz default now()
 );
 
+CREATE TABLE IF NOT EXISTS public.trades (
+    id bigint primary key generated always as identity,
+    symbol text not null,
+    side text not null,
+    entry_price float not null,
+    sl_price float not null,
+    tp_price float not null,
+    status text not null default 'OPEN',
+    pnl float default 0,
+    created_at timestamptz default now(),
+    closed_at timestamptz
+);
+
 ALTER TABLE public.model_sync ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.training_status ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.trades ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN
@@ -45,6 +59,14 @@ BEGIN
         WHERE tablename = 'model_sync' AND policyname = 'Allow public access'
     ) THEN
         CREATE POLICY "Allow public access" ON public.model_sync
+        FOR ALL USING (true);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE tablename = 'trades' AND policyname = 'Allow public access'
+    ) THEN
+        CREATE POLICY "Allow public access" ON public.trades
         FOR ALL USING (true);
     END IF;
 END $$;
@@ -87,50 +109,41 @@ async function runMigration() {
     const pg = await import('pg');
     const { Client } = pg.default;
     
-    // Try using the Supabase Pooler (which IS reachable via the main hostname)
-    let projectRef = '';
-    try {
-      const urlObj = new URL(supabaseUrl);
-      projectRef = urlObj.hostname.split('.')[0];
-    } catch (e) {
-      projectRef = supabaseUrl.replace('https://', '').split('.')[0];
-    }
+    // Parse the DB URL for components to avoid URL-encoding bugs
+    const dbUrl = process.env.SUPABASE_DB_URL;
     
-    // The pooler runs on the same hostname as the API but on port 6543
-    const poolerHost = "aws-0-us-east-1.pooler.supabase.com";
-    const dbPassword = process.env.SUPABASE_DB_PASSWORD;
-    
-    if (!dbPassword) {
+    if (!dbUrl) {
       console.log("");
-      console.log("⚠️  Direct Postgres connection isn't available for this project.");
-      console.log("   Please run the following SQL in your Supabase Dashboard SQL Editor:");
-      console.log("   (Dashboard -> SQL Editor -> New Query -> Paste & Run)");
-      console.log("────────────────────────────────────────────────────");
-      console.log(sql);
-      console.log("────────────────────────────────────────────────────");
-      console.log("✅ Once done, your cloud sync will be fully operational!");
+      console.log("⚠️  No SUPABASE_DB_URL found in .env.");
       return;
     }
-
-    // Try connecting via pooler  
-    const client = new Client({
-      host: poolerHost,
-      port: 6543,
-      database: 'postgres',
-      user: "postgres." + projectRef,
-      password: dbPassword,
-      ssl: { rejectUnauthorized: false }
-    });
-
-    console.log("🔄 Trying Supabase Connection Pooler...");
-    await client.connect();
-    console.log("✅ Connected via pooler!");
-    
-    console.log("🏗  Creating model_sync table...");
-    await client.query(sql);
-    console.log("✅ Table 'model_sync' is ready! Cloud sync is now fully operational.");
-    
-    await client.end();
+ 
+    try {
+        const client = new Client({
+          connectionString: dbUrl,
+          ssl: { rejectUnauthorized: false }
+        });
+        await client.connect();
+        console.log("✅ Connected!");
+        await client.query(sql);
+        console.log("✅ Database schema is up to date!");
+        await client.end();
+    } catch (e) {
+        console.log("⚠️  Connection string failed, attempting explicit parameter fallback...");
+        // Manual fallback for complex passwords
+        const client = new Client({
+            user: 'postgres',
+            host: 'db.rkhzghaflnietnnojxcu.supabase.co',
+            database: 'postgres',
+            password: '4AsU$?SASr5BVK3',
+            port: 5432,
+            ssl: { rejectUnauthorized: false }
+        });
+        await client.connect();
+        await client.query(sql);
+        console.log("✅ Database schema is up to date (via fallback)!");
+        await client.end();
+    }
 
   } catch (err) {
     console.error("❌ Migration failed:", err.message);
