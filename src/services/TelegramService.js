@@ -39,6 +39,7 @@ _Trend Filter: Aligned with Daily 200 EMA_`;
     const url = `https://api.telegram.org/bot${activeToken}/sendMessage`;
     
     try {
+      console.log(`[TelegramService] Attempting to send signal to Chat ID: ${activeId}...`);
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -49,13 +50,15 @@ _Trend Filter: Aligned with Daily 200 EMA_`;
         })
       });
       
+      const responseData = await res.json();
+
       if (!res.ok) {
-         const err = await res.text();
-         throw new Error(`Telegram API Error: ${err}`);
+         throw new Error(responseData.description || `Telegram API Error: ${res.status}`);
       }
-      console.log(`[TelegramService] Pushed ultra-low latency alert for ${symbol} to Phone.`);
+      console.log(`[TelegramService] ✅ Success! Message delivered to Telegram servers.`);
     } catch(e) {
-      console.error(`[TelegramService] Webhook payload failed:`, e.message);
+      console.error(`[TelegramService] ❌ Delivery Failed:`, e.message);
+      throw e; // Re-throw so the UI can catch it!
     }
   }
 }
