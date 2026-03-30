@@ -42,6 +42,15 @@ export class RuleEngine {
         buyScore += 4; // MASSIVE CONFLUENCE BOOST
     }
 
+    // --- Institutional Market Structure Factor ---
+    if (latestRow.ms_structure === 'BULLISH') {
+        buyScore += 4; 
+        sellScore -= 6; // Heavy penalty for selling in bullish structure
+    } else if (latestRow.ms_structure === 'BEARISH') {
+        sellScore += 4;
+        buyScore -= 6; // Heavy penalty for buying in bearish structure
+    }
+
     if (latestRow.dist_to_support !== null && latestRow.dist_to_support < 0.001) buyScore += 1;
     if (latestRow.pivot_dist !== null && latestRow.pivot_dist > 0 && latestRow.pivot_dist < 0.001) buyScore += 1;
 

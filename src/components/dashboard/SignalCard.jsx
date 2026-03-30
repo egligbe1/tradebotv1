@@ -1,7 +1,7 @@
 import React from 'react';
 import { Share2, Clock, AlertTriangle } from 'lucide-react';
 
-export function SignalCard({ signalObject, currentPrice }) {
+export function SignalCard({ signalObject, currentPrice, structure }) {
   if (!signalObject) {
     return (
        <div className="bg-card border border-border rounded-xl p-6 h-full flex flex-col items-center justify-center text-muted-foreground">
@@ -40,7 +40,10 @@ export function SignalCard({ signalObject, currentPrice }) {
              </div>
           </div>
         </div>
-        <div className="text-right">
+        <div className="text-right flex flex-col items-end">
+           <div className={`px-2 py-0.5 rounded text-[10px] font-bold mb-2 ${structure === 'BULLISH' ? 'bg-green-500/20 text-green-500' : (structure === 'BEARISH' ? 'bg-red-500/20 text-red-500' : 'bg-yellow-500/20 text-yellow-500')}`}>
+              {structure} MS
+           </div>
            <p className="text-sm text-muted-foreground">Generated at</p>
            <p className="font-mono text-lg">{timeStr}</p>
         </div>

@@ -17,7 +17,7 @@ function getSymbolPrecision(symbol) {
   return { precision: 2, minMove: 0.01 };
 }
 
-export function PriceChart({ data, width = 0, height = 400, support, resistance, supportZones = [], resistanceZones = [], signal, symbol = 'EUR/USD' }) {
+export function PriceChart({ data, width = 0, height = 400, support, resistance, supportZone, resistanceZone, structure, signal, symbol = 'EUR/USD' }) {
   const chartContainerRef = useRef();
   const chartRef = useRef();
 
@@ -138,6 +138,57 @@ export function PriceChart({ data, width = 0, height = 400, support, resistance,
           }
 
           chart.timeScale().fitContent();
+
+          // --- Market Structure & Target Zones (Rectangles) ---
+          if (supportZone) {
+             candleSeries.createPriceLine({
+                price: supportZone.top,
+                color: 'rgba(16, 185, 129, 0.4)',
+                lineWidth: 1,
+                lineStyle: 2, // Dashed
+                axisLabelVisible: false,
+                title: 'Zone Top',
+             });
+             candleSeries.createPriceLine({
+                price: supportZone.bottom,
+                color: 'rgba(16, 185, 129, 0.4)',
+                lineWidth: 1,
+                lineStyle: 2, // Dashed
+                axisLabelVisible: false,
+                title: 'Zone Bottom',
+             });
+          }
+
+          if (resistanceZone) {
+             candleSeries.createPriceLine({
+                price: resistanceZone.top,
+                color: 'rgba(239, 68, 68, 0.4)',
+                lineWidth: 1,
+                lineStyle: 2, // Dashed
+                axisLabelVisible: false,
+                title: 'Zone Top',
+             });
+             candleSeries.createPriceLine({
+                price: resistanceZone.bottom,
+                color: 'rgba(239, 68, 68, 0.4)',
+                lineWidth: 1,
+                lineStyle: 2, // Dashed
+                axisLabelVisible: false,
+                title: 'Zone Bottom',
+             });
+          }
+
+          // Market Structure Marker
+          if (structure && structure !== 'NEUTRAL' && uniqueData.length > 0) {
+             const lastItem = uniqueData[uniqueData.length - 1];
+             candleSeries.setMarkers([{
+                time: lastItem.time,
+                position: structure === 'BULLISH' ? 'belowBar' : 'aboveBar',
+                color: structure === 'BULLISH' ? '#10b981' : '#ef4444',
+                shape: structure === 'BULLISH' ? 'arrowUp' : 'arrowDown',
+                text: `${structure} MS`,
+             }]);
+          }
         }
 
         // Auto-resize handler
@@ -156,10 +207,10 @@ export function PriceChart({ data, width = 0, height = 400, support, resistance,
           }
         };
     } catch (e) {
-        console.log("Error initializing chart:", e);
+        console.error("Error initializing chart:", e);
         return () => {};
     }
-  }, [data, height, support, resistance, supportZones, resistanceZones, signal, symbol]);
+  }, [data, height, support, resistance, supportZone, resistanceZone, structure, signal, symbol]);
 
   return (
     <div className="w-full relative bg-card border border-border rounded-xl overflow-hidden shadow-md">

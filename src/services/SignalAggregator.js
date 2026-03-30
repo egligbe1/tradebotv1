@@ -105,18 +105,20 @@ export class SignalAggregator {
     const CONVICTION_THRESHOLD = 0.40; // Sweet spot: needs 2+ models agreeing
 
     if (finalScore >= CONVICTION_THRESHOLD) {
-        // Only block if trend is strongly bearish (soft filter)
-        if (latestRow.trend_regime >= -0.01) {
+        // Institutional Filter: Align with Structure + Macro Trend
+        const isBearishStructure = latestRow.ms_structure === 'BEARISH';
+        if (!isBearishStructure && latestRow.trend_regime >= -0.01) {
             masterSignal = 'BUY';
         } else {
-            console.log("Filtered BUY: Fighting strong daily bearish trend.");
+            console.log(`[SignalAggregator] Filtered BUY: Fighting ${isBearishStructure ? 'Bearish Structure' : 'Strong Daily Trend'}.`);
         }
     } else if (finalScore <= -CONVICTION_THRESHOLD) {
-        // Only block if trend is strongly bullish (soft filter)
-        if (latestRow.trend_regime <= 0.01) {
+        // Institutional Filter: Align with Structure + Macro Trend
+        const isBullishStructure = latestRow.ms_structure === 'BULLISH';
+        if (!isBullishStructure && latestRow.trend_regime <= 0.01) {
             masterSignal = 'SELL';
         } else {
-            console.log("Filtered SELL: Fighting strong daily bullish trend.");
+            console.log(`[SignalAggregator] Filtered SELL: Fighting ${isBullishStructure ? 'Bullish Structure' : 'Strong Daily Trend'}.`);
         }
     }
 

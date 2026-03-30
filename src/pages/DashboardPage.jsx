@@ -40,23 +40,24 @@ export default function DashboardPage() {
       const latestFeature = features[features.length - 1];
       const support = latestFeature ? latestFeature.support_50 : null;
       const resistance = latestFeature ? latestFeature.resistance_50 : null;
+      const supportZone = latestFeature ? latestFeature.support_zone : null;
+      const resistanceZone = latestFeature ? latestFeature.resistance_zone : null;
+      const structure = latestFeature ? latestFeature.ms_structure : 'NEUTRAL';
 
       setDashboardData(prev => {
           // If the signal was previously HOLD, and is now BUY/SELL, notify!
-          // We also require a confidence threshold to avoid spam (e.g. > 40%)
           if (prev.signal && prev.signal.signal === 'HOLD' && signal.signal !== 'HOLD' && signal.confidence > 0.40) {
               notificationManager.notifySignal(signal);
           }
-          let newSignal = signal;
-          if (!prev.signal || prev.signal.signal === 'HOLD' && signal.signal === 'HOLD'){
-              // Do nothing special
-          }
           return {
              candles,
-             signal: newSignal,
+             signal,
              currentPrice,
              support,
-             resistance
+             resistance,
+             supportZone,
+             resistanceZone,
+             structure
           }
       });
 
@@ -139,7 +140,11 @@ export default function DashboardPage() {
       {/* Top Grid: Signal Card & Model Votes */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-4 space-y-6">
-            <SignalCard signalObject={dashboardData.signal} currentPrice={dashboardData.currentPrice} />
+            <SignalCard 
+              signalObject={dashboardData.signal} 
+              currentPrice={dashboardData.currentPrice} 
+              structure={dashboardData.structure} 
+            />
             <RiskCalculator signal={dashboardData.signal} currentPrice={dashboardData.currentPrice} />
         </div>
         <div className="lg:col-span-8 h-full flex flex-col">
@@ -153,6 +158,9 @@ export default function DashboardPage() {
                  height={350} 
                  support={dashboardData.support}
                  resistance={dashboardData.resistance}
+                 supportZone={dashboardData.supportZone}
+                 resistanceZone={dashboardData.resistanceZone}
+                 structure={dashboardData.structure}
                  signal={dashboardData.signal}
                  symbol={symbol}
               />

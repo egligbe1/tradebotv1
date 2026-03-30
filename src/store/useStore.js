@@ -26,10 +26,10 @@ export const useStore = create(
       setTimeframe: (tf) => set({ timeframe: tf }),
 
       modelWeights: {
-        logistic: 0.15,
-        lstm: 0.40,
-        randomForest: 0.25,
-        ruleEngine: 0.20,
+        logistic: 0.10,
+        lstm: 0.35,
+        randomForest: 0.20,
+        ruleEngine: 0.35,
       },
       setModelWeights: (weights) => set({ modelWeights: weights }),
 

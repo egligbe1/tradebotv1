@@ -42,7 +42,8 @@ const FEATURES_22 = [
   'bb_pct_b', 'bb_width', 'atr_norm', 'stoch_k', 'stoch_d', 
   'cci', 'williams_r', 'vol_ratio', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
   'dist_to_support', 'dist_to_resistance', 'pivot_dist', 
-  'trigger_engulfing', 'trigger_pinbar', 'trend_regime', 'trend_strength'
+  'trigger_engulfing', 'trigger_pinbar', 'trend_regime', 'trend_strength',
+  'ms_structure_num', 'support_touches', 'resistance_touches'
 ];
 
 // LSTM Features
@@ -51,7 +52,8 @@ const FEATURES_20 = [
     'bb_pct_b', 'bb_width', 'atr_norm', 'stoch_k', 'stoch_d', 
     'vol_ratio', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
     'dist_to_support', 'dist_to_resistance', 'pivot_dist', 
-    'trigger_engulfing', 'trigger_pinbar', 'trend_regime', 'trend_strength'
+    'trigger_engulfing', 'trigger_pinbar', 'trend_regime', 'trend_strength',
+    'ms_structure_num', 'support_touches', 'resistance_touches'
 ];
 const LOOKBACK = 24;
 
@@ -149,11 +151,11 @@ function trainRandomForest(featuresArr, symbol) {
     const xVal = X.slice(splitIdx);
     const yVal = y.slice(splitIdx);
 
-    // Grid Search Auto-Tuner
+    // Expanded Institutional Grid Search
     const grids = [
-        { maxFeatures: 5, nEstimators: 50, treeOptions: { maxDepth: 4, minNumSamples: 10 } }, // Light structure (fast reacting)
         { maxFeatures: 5, nEstimators: 100, treeOptions: { maxDepth: 6, minNumSamples: 10 } }, // Balanced architecture
-        { maxFeatures: 6, nEstimators: 150, treeOptions: { maxDepth: 8, minNumSamples: 5 } } // Deep geometry (heavy trends)
+        { maxFeatures: 7, nEstimators: 150, treeOptions: { maxDepth: 10, minNumSamples: 5 } }, // Deep geometry (heavy trends)
+        { maxFeatures: 8, nEstimators: 200, treeOptions: { maxDepth: 12, minNumSamples: 2 } }  // Ultra-precise fractal capture
     ];
 
     let bestModel = null;
@@ -201,10 +203,11 @@ async function trainLSTM(featuresArr, symbol) {
     }
 
     const model = tf.sequential();
-    model.add(tf.layers.lstm({ units: 64, returnSequences: true, inputShape: [LOOKBACK, FEATURES_20.length] }));
+    model.add(tf.layers.lstm({ units: 128, returnSequences: true, inputShape: [LOOKBACK, FEATURES_20.length] }));
+    model.add(tf.layers.dropout({ rate: 0.2 }));
+    model.add(tf.layers.lstm({ units: 64, returnSequences: true }));
     model.add(tf.layers.dropout({ rate: 0.2 }));
     model.add(tf.layers.lstm({ units: 32, returnSequences: false }));
-    model.add(tf.layers.dropout({ rate: 0.2 }));
     model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
     model.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
 

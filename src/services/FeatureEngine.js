@@ -197,11 +197,23 @@ export class FeatureEngine {
                     if (Math.abs(sorted_p[j] - cluster[cluster.length - 1]) <= tolerance) {
                         cluster.push(sorted_p[j]);
                     } else {
-                        zones.push({ price: cluster.reduce((a, b) => a + b, 0) / cluster.length, touches: cluster.length });
+                        const mid = cluster.reduce((a, b) => a + b, 0) / cluster.length;
+                        zones.push({ 
+                            price: mid, 
+                            top: Math.max(...cluster),
+                            bottom: Math.min(...cluster),
+                            touches: cluster.length 
+                        });
                         cluster = [sorted_p[j]];
                     }
                 }
-                zones.push({ price: cluster.reduce((a, b) => a + b, 0) / cluster.length, touches: cluster.length });
+                const mid = cluster.reduce((a, b) => a + b, 0) / cluster.length;
+                zones.push({ 
+                    price: mid, 
+                    top: Math.max(...cluster),
+                    bottom: Math.min(...cluster),
+                    touches: cluster.length 
+                });
                 return zones.sort((a, b) => b.touches - a.touches); // Strongest first
             };
             
@@ -211,18 +223,49 @@ export class FeatureEngine {
             // Promote only the single strongest level as requested
             row.support_50 = supportZones.length > 0 ? supportZones[0].price : null;
             row.resistance_50 = resistanceZones.length > 0 ? resistanceZones[0].price : null;
+            row.support_zone = supportZones.length > 0 ? { top: supportZones[0].top, bottom: supportZones[0].bottom } : null;
+            row.resistance_zone = resistanceZones.length > 0 ? { top: resistanceZones[0].top, bottom: resistanceZones[0].bottom } : null;
+            
             row.support_touches = supportZones.length > 0 ? supportZones[0].touches : 0;
             row.resistance_touches = resistanceZones.length > 0 ? resistanceZones[0].touches : 0;
             
             row.dist_to_support = row.support_50 ? (c.close - row.support_50) / row.support_50 : null;
             row.dist_to_resistance = row.resistance_50 ? (row.resistance_50 - c.close) / row.resistance_50 : null;
+
+            // --- Market Structure Detection (HH/HL/LH/LL) ---
+            if (pivotHighs.length >= 2 && pivotLows.length >= 2) {
+               const lastPH = pivotHighs[pivotHighs.length - 1];
+               const prevPH = pivotHighs[pivotHighs.length - 2];
+               const lastPL = pivotLows[pivotLows.length - 1];
+               const prevPL = pivotLows[pivotLows.length - 2];
+
+               row.ms_high = lastPH > prevPH ? 'HH' : 'LH';
+               row.ms_low = lastPL > prevPL ? 'HL' : 'LL';
+               
+               // Trend state based on structure confluence
+               if (row.ms_high === 'HH' && row.ms_low === 'HL') row.ms_structure = 'BULLISH';
+               else if (row.ms_high === 'LH' && row.ms_low === 'LL') row.ms_structure = 'BEARISH';
+               else row.ms_structure = 'CHOCH'; // Change of Character / Indecision
+               
+               // Numeric encoding for ML Models
+               row.ms_structure_num = (row.ms_structure === 'BULLISH' ? 1 : (row.ms_structure === 'BEARISH' ? -1 : 0));
+            } else {
+               row.ms_high = null;
+               row.ms_low = null;
+               row.ms_structure = 'NEUTRAL';
+               row.ms_structure_num = 0;
+            }
         } else {
             row.support_50 = null;
             row.resistance_50 = null;
+            row.support_zone = null;
+            row.resistance_zone = null;
             row.dist_to_support = null;
             row.dist_to_resistance = null;
             row.support_touches = 0;
             row.resistance_touches = 0;
+            row.ms_structure = 'INITIALIZING';
+            row.ms_structure_num = 0;
         }
 
         // Pivot Points (Previous Candle Basis)
