@@ -18,22 +18,22 @@ export class TelegramService {
         return;
     }
 
-    const actionEmoji = signalData.signal === 'BUY' ? '🟢' : '🔴';
+    const action = signalData.signal === 'BUY' ? '🟢 BUY' : '🔴 SELL';
     const conf = (signalData.confidence * 100).toFixed(1);
     
-    // Using HTML mode for bulletproof parsing (doesn't crash on special chars)
+    // Switch to HTML for 100% reliability (avoid unescaped _ or *)
     const message = `
 <b>🚨 TRADEBOT SIGNAL 🚨</b>
 <b>Asset:</b> ${symbol}
-<b>Action:</b> ${actionEmoji} ${signalData.signal}
+<b>Action:</b> ${action}
 <b>Conviction:</b> ${conf}%
 
 <b>Entry:</b> ${signalData.entry}
 <b>Stop Loss:</b> ${signalData.stop_loss}
-<b>TP 1:</b> ${signalData.take_profit_1}
-<b>TP 2:</b> ${signalData.take_profit_2}
+<b>Take Profit 1:</b> ${signalData.take_profit_1}
+<b>Take Profit 2:</b> ${signalData.take_profit_2}
 
-<i>Models Aligned: Rule Engine, LSTM, RF, Logistic</i>
+<i>Models Aligned: Rule Engine, LSTM, RF, Logistic Regression</i>
 <i>Trend Filter: Aligned with Daily 200 EMA</i>`;
 
     const url = `https://api.telegram.org/bot${activeToken}/sendMessage`;

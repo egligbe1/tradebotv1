@@ -193,9 +193,9 @@ export default function ModelsPage() {
     <div className="p-6 max-w-5xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold">Models & AI Pipeline</h1>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-12">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Retrain Panel */}
-        <div className="glass-card p-8 rounded-2xl shadow-xl flex flex-col">
+        <div className="bg-card border border-border p-6 rounded-xl shadow-sm">
            <div className="flex items-center gap-2 mb-4">
               <Brain className="text-primary w-5 h-5" />
               <h2 className="text-lg font-semibold">AI Neural Ensemble Training</h2>
@@ -250,7 +250,7 @@ export default function ModelsPage() {
         </div>
 
         {/* Ensemble Tuning Panel */}
-        <div className="glass-card p-8 rounded-2xl shadow-xl flex flex-col">
+        <div className="bg-card border border-border p-6 rounded-xl shadow-sm flex flex-col">
            <h2 className="text-lg font-semibold mb-4">Ensemble Voting Weights</h2>
            <p className="text-sm text-muted-foreground mb-6">
               Adjust the voting power of each individual model. The SignalAggregator uses these weights to formulate the master output probability.

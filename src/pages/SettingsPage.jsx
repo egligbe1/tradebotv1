@@ -54,7 +54,7 @@ export default function SettingsPage() {
     <div className="p-6 max-w-2xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
       
-      <div className="glass-card p-8 rounded-2xl shadow-xl mb-8">
+      <div className="bg-card p-6 rounded-lg border border-border shadow-sm mb-6">
         <h2 className="text-lg font-semibold mb-4 text-primary">Twelve Data API Configuration</h2>
         <div className="space-y-4">
           <div>
@@ -73,7 +73,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="glass-card p-8 rounded-2xl shadow-xl mb-8">
+      <div className="bg-card p-6 rounded-lg border border-border shadow-sm mb-6">
         <div className="flex items-center gap-3 mb-4 text-primary">
           <Bell className="w-5 h-5" />
           <h2 className="text-lg font-semibold">Live Browser Notifications</h2>
@@ -100,7 +100,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="glass-card p-8 rounded-2xl shadow-xl mb-8">
+      <div className="bg-card p-6 rounded-lg border border-border shadow-sm mb-6">
         <div className="flex items-center gap-3 mb-4 text-primary">
           <Send className="w-5 h-5" />
           <h2 className="text-lg font-semibold">Telegram Mobile Alerts</h2>
