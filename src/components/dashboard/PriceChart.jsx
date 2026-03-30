@@ -85,57 +85,26 @@ export function PriceChart({ data, width = 0, height = 400, support, resistance,
           
           candleSeries.setData(uniqueData);
           
-          // --- Multi-Level Support & Resistance Zones ---
-          const srStyles = [
-            { lineWidth: 2, lineStyle: 0, opacity: 1.0 },   // Primary: Solid, full opacity
-            { lineWidth: 1, lineStyle: 2, opacity: 0.6 },   // Secondary: Dashed, faded
-            { lineWidth: 1, lineStyle: 3, opacity: 0.35 },  // Tertiary: Dotted, ghost
-          ];
-
-          // Draw support zones (green)
-          if (supportZones.length > 0) {
-            supportZones.forEach((zone, idx) => {
-              if (idx < 3 && zone.price) {
-                const style = srStyles[idx];
-                candleSeries.createPriceLine({
-                  price: zone.price,
-                  color: `rgba(16, 185, 129, ${style.opacity})`,
-                  lineWidth: style.lineWidth,
-                  lineStyle: style.lineStyle,
-                  axisLabelVisible: idx === 0,
-                  title: idx === 0 ? `S1 (${zone.touches}x)` : `S${idx+1}`,
-                });
-              }
-            });
-          } else if (support) {
-            // Fallback to single support line
-            candleSeries.createPriceLine({
-              price: support, color: '#10b981', lineWidth: 2, lineStyle: 2,
-              axisLabelVisible: true, title: 'Support',
-            });
+          // --- Strongest Support & Resistance Lines ---
+          if (support) {
+             candleSeries.createPriceLine({
+                price: support,
+                color: '#10b981', // green-500
+                lineWidth: 2,
+                lineStyle: 0, // Solid for primary
+                axisLabelVisible: true,
+                title: 'Strong Support',
+             });
           }
-
-          // Draw resistance zones (red)
-          if (resistanceZones.length > 0) {
-            resistanceZones.forEach((zone, idx) => {
-              if (idx < 3 && zone.price) {
-                const style = srStyles[idx];
-                candleSeries.createPriceLine({
-                  price: zone.price,
-                  color: `rgba(239, 68, 68, ${style.opacity})`,
-                  lineWidth: style.lineWidth,
-                  lineStyle: style.lineStyle,
-                  axisLabelVisible: idx === 0,
-                  title: idx === 0 ? `R1 (${zone.touches}x)` : `R${idx+1}`,
-                });
-              }
-            });
-          } else if (resistance) {
-            // Fallback to single resistance line
-            candleSeries.createPriceLine({
-              price: resistance, color: '#ef4444', lineWidth: 2, lineStyle: 2,
-              axisLabelVisible: true, title: 'Resistance',
-            });
+          if (resistance) {
+             candleSeries.createPriceLine({
+                price: resistance,
+                color: '#ef4444', // red-500
+                lineWidth: 2,
+                lineStyle: 0, // Solid for primary
+                axisLabelVisible: true,
+                title: 'Strong Resistance',
+             });
           }
           if (signal && signal.signal !== 'HOLD' && signal.entry) {
              candleSeries.createPriceLine({

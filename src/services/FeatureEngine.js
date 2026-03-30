@@ -163,16 +163,14 @@ export class FeatureEngine {
 
         // Support & Resistance (Fractal Swing Point Detection)
         // A swing high = candle whose high is the highest of L neighbors on each side
-        // A swing low  = candle whose low is the lowest of L neighbors on each side
-        const SR_LOOKBACK = 5; // fractal order (5 candles each side)
-        const SR_HISTORY  = 200; // how far back to scan for pivots
+        const SR_LOOKBACK = 5; 
+        const SR_HISTORY  = 500; // Increased to ~3 weeks of H1 data for "enough data" 
         
         if (i >= SR_LOOKBACK + 1) {
             const scanStart = Math.max(0, i - SR_HISTORY);
             const pivotHighs = [];
             const pivotLows = [];
             
-            // Detect fractal swing points in the visible history
             for (let k = scanStart + SR_LOOKBACK; k <= i - SR_LOOKBACK; k++) {
                 let isSwingHigh = true;
                 let isSwingLow = true;
@@ -188,7 +186,6 @@ export class FeatureEngine {
                 if (isSwingLow) pivotLows.push(candidateLow);
             }
             
-            // Cluster nearby pivots into zones (merge levels within 0.15% of each other)
             const clusterLevels = (pivots) => {
                 if (pivots.length === 0) return [];
                 const sorted_p = [...pivots].sort((a, b) => a - b);
@@ -196,32 +193,27 @@ export class FeatureEngine {
                 let cluster = [sorted_p[0]];
                 
                 for (let j = 1; j < sorted_p.length; j++) {
-                    const tolerance = cluster[0] * 0.0015; // 0.15% merge band
+                    const tolerance = cluster[0] * 0.002; // 0.2% merge band for robust zones
                     if (Math.abs(sorted_p[j] - cluster[cluster.length - 1]) <= tolerance) {
                         cluster.push(sorted_p[j]);
                     } else {
-                        // Zone price = the average of the cluster; strength = touch count
                         zones.push({ price: cluster.reduce((a, b) => a + b, 0) / cluster.length, touches: cluster.length });
                         cluster = [sorted_p[j]];
                     }
                 }
                 zones.push({ price: cluster.reduce((a, b) => a + b, 0) / cluster.length, touches: cluster.length });
-                // Sort by strength (most touches first)
-                return zones.sort((a, b) => b.touches - a.touches);
+                return zones.sort((a, b) => b.touches - a.touches); // Strongest first
             };
             
             const resistanceZones = clusterLevels(pivotHighs).filter(z => z.price > c.close);
             const supportZones = clusterLevels(pivotLows).filter(z => z.price < c.close);
             
-            // Primary S/R = the nearest strong level
+            // Promote only the single strongest level as requested
             row.support_50 = supportZones.length > 0 ? supportZones[0].price : null;
             row.resistance_50 = resistanceZones.length > 0 ? resistanceZones[0].price : null;
+            row.support_touches = supportZones.length > 0 ? supportZones[0].touches : 0;
+            row.resistance_touches = resistanceZones.length > 0 ? resistanceZones[0].touches : 0;
             
-            // Store full zone arrays for chart rendering
-            row._supportZones = supportZones.slice(0, 3);  // Top 3 support zones
-            row._resistanceZones = resistanceZones.slice(0, 3); // Top 3 resistance zones
-            
-            // Proximity features for ML
             row.dist_to_support = row.support_50 ? (c.close - row.support_50) / row.support_50 : null;
             row.dist_to_resistance = row.resistance_50 ? (row.resistance_50 - c.close) / row.resistance_50 : null;
         } else {
@@ -229,8 +221,8 @@ export class FeatureEngine {
             row.resistance_50 = null;
             row.dist_to_support = null;
             row.dist_to_resistance = null;
-            row._supportZones = [];
-            row._resistanceZones = [];
+            row.support_touches = 0;
+            row.resistance_touches = 0;
         }
 
         // Pivot Points (Previous Candle Basis)
