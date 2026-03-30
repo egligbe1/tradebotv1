@@ -236,14 +236,18 @@ export class FeatureEngine {
         }
 
         // Price Action Triggers
-        row.trigger_engulfing = 0; // 1 = Bullish, -1 = Bearish
-        row.trigger_pinbar = 0;    // 1 = Bullish, -1 = Bearish
+        row.trigger_engulfing = 0; 
+        row.trigger_pinbar = 0;    
+        row.trigger_doji = 0;
+        row.trigger_inside_bar = 0;
+        row.trigger_star = 0; // 1 = Morning Star (Bullish), -1 = Evening Star (Bearish)
         
         if (prevC) {
             const prevBody = Math.abs(prevC.close - prevC.open);
             const currBody = Math.abs(c.close - c.open);
+            const totalRange = c.high - c.low;
             
-            // Engulfing
+            // 1. Engulfing
             if (currBody > prevBody) {
                 if (c.close > c.open && prevC.close < prevC.open && c.close > prevC.open && c.open < prevC.close) {
                     row.trigger_engulfing = 1;
@@ -252,15 +256,43 @@ export class FeatureEngine {
                 }
             }
             
-            // Pin Bar (Long wick, small body)
-            const bodyRange = Math.abs(c.close - c.open);
-            const totalRange = c.high - c.low;
-            if (totalRange > 0 && bodyRange / totalRange < 0.3) {
+            // 2. Pin Bar (Long wick, small body)
+            if (totalRange > 0 && currBody / totalRange < 0.3) {
                 const upperWick = c.high - Math.max(c.open, c.close);
                 const lowerWick = Math.min(c.open, c.close) - c.low;
+                if (lowerWick > totalRange * 0.6) row.trigger_pinbar = 1;  
+                else if (upperWick > totalRange * 0.6) row.trigger_pinbar = -1;
+            }
+
+            // 3. Doji (Indecision)
+            if (totalRange > 0 && currBody / totalRange < 0.1) {
+                row.trigger_doji = 1;
+            }
+
+            // 4. Inside Bar (Consolidation)
+            if (c.high < prevC.high && c.low > prevC.low) {
+                row.trigger_inside_bar = 1;
+            }
+
+            // 5. Morning / Evening Star (3-Candle Reversal)
+            // Needs i >= 2
+            if (i >= 2) {
+                const twoBack = sorted[i-2];
+                const twoBackBody = Math.abs(twoBack.close - twoBack.open);
+                const prevRange = prevC.high - prevC.low;
                 
-                if (lowerWick > totalRange * 0.6) row.trigger_pinbar = 1;   // Bullish Pin
-                else if (upperWick > totalRange * 0.6) row.trigger_pinbar = -1; // Bearish Pin
+                // Morning Star: Bearish(L) -> Small(S) -> Bullish(L)
+                if (twoBack.close < twoBack.open &&                   // Large Bearish
+                    prevBody / prevRange < 0.3 &&                    // Small prev body (Star)
+                    c.close > c.open && c.close > twoBack.open + (twoBackBody * 0.5)) { // Strong Bullish reversal
+                    row.trigger_star = 1;
+                }
+                // Evening Star: Bullish(L) -> Small(S) -> Bearish(L)
+                else if (twoBack.close > twoBack.open &&               // Large Bullish
+                         prevBody / prevRange < 0.3 &&                // Small prev body (Star)
+                         c.close < c.open && c.close < twoBack.open - (twoBackBody * 0.5)) { // Strong Bearish reversal
+                    row.trigger_star = -1;
+                }
             }
         }
 

@@ -30,8 +30,17 @@ export class RuleEngine {
     if (latestRow.is_overlap === 1) buyScore += 1; // London/NY overlap (high liquidity)
     
     // SMART TRIGGERS (Engulfing/Pin Bar/SR)
+    const nearSupport = latestRow.dist_to_support !== null && latestRow.dist_to_support < 0.002; // within 0.2%
+    
     if (latestRow.trigger_engulfing === 1) buyScore += 2;
     if (latestRow.trigger_pinbar === 1) buyScore += 2;
+    if (latestRow.trigger_star === 1) buyScore += 3; // Stars are Rare but Powerful
+    
+    // Confluence Bonus: Pattern + S/R Zone
+    if (nearSupport && (latestRow.trigger_engulfing === 1 || latestRow.trigger_pinbar === 1 || latestRow.trigger_star === 1)) {
+        buyScore += 4; // MASSIVE CONFLUENCE BOOST
+    }
+
     if (latestRow.dist_to_support !== null && latestRow.dist_to_support < 0.001) buyScore += 1;
     if (latestRow.pivot_dist !== null && latestRow.pivot_dist > 0 && latestRow.pivot_dist < 0.001) buyScore += 1;
 
@@ -47,8 +56,17 @@ export class RuleEngine {
     if (latestRow.stoch_k < latestRow.stoch_d && latestRow.stoch_d > 80) sellScore += 1;
 
     // SMART TRIGGERS (Engulfing/Pin Bar/SR)
+    const nearResistance = latestRow.dist_to_resistance !== null && latestRow.dist_to_resistance < 0.002;
+
     if (latestRow.trigger_engulfing === -1) sellScore += 2;
     if (latestRow.trigger_pinbar === -1) sellScore += 2;
+    if (latestRow.trigger_star === -1) sellScore += 3;
+
+    // Confluence Bonus: Pattern + S/R Zone
+    if (nearResistance && (latestRow.trigger_engulfing === -1 || latestRow.trigger_pinbar === -1 || latestRow.trigger_star === -1)) {
+        sellScore += 4; // MASSIVE CONFLUENCE BOOST
+    }
+
     if (latestRow.dist_to_resistance !== null && latestRow.dist_to_resistance < 0.001) sellScore += 1;
     if (latestRow.pivot_dist !== null && latestRow.pivot_dist < 0 && Math.abs(latestRow.pivot_dist) < 0.001) sellScore += 1;
 
@@ -57,15 +75,15 @@ export class RuleEngine {
     let signal = 'HOLD';
     let probability = 0.5; // neutral
 
-    // We required 5+ conditions in the prompt
-    if (buyScore >= 5) {
+    // We require 6+ conditions for "Very Accurate" entries
+    if (buyScore >= 6) {
       signal = 'BUY';
-      // Map score 5-8 into a probability 0.6 to 0.9 for the aggregator
-      probability = 0.5 + Math.min(buyScore, 8) / 16; 
-    } else if (sellScore >= 5) {
+      // Map score 6-12 into a probability 0.6 to 0.95
+      probability = 0.5 + Math.min(buyScore, 12) / 24; 
+    } else if (sellScore >= 6) {
       signal = 'SELL';
-      // Map score 5-8 into a probability 0.4 to 0.1
-      probability = 0.5 - Math.min(sellScore, 8) / 16;
+      // Map score 6-12 into a probability 0.4 to 0.05
+      probability = 0.5 - Math.min(sellScore, 12) / 24;
     }
 
     return {
