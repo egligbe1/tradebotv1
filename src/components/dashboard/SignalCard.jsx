@@ -22,12 +22,13 @@ export function SignalCard({ signalObject, currentPrice }) {
   };
 
   const colors = getColors();
+  const signalStyle = signal === 'BUY' ? 'signal-card-buy' : signal === 'SELL' ? 'signal-card-sell' : 'glass-card border-yellow-500/20';
   const timeStr = new Date(timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
 
   return (
-    <div className={`bg-card border ${colors.border} rounded-xl p-6 relative overflow-hidden flex flex-col h-full shadow-lg`}>
+    <div className={`glass-card ${signalStyle} rounded-2xl p-7 relative overflow-hidden flex flex-col h-full shadow-2xl transition-all duration-500`}>
       {/* Background glow sync'd to signal */}
-      <div className={`absolute -top-24 -right-24 w-48 h-48 ${colors.bg} rounded-full blur-3xl opacity-50 pointer-events-none`} />
+      <div className={`absolute -top-32 -right-32 w-64 h-64 ${colors.bg} rounded-full blur-[100px] opacity-40 pointer-events-none transition-all duration-1000`} />
 
       <div className="flex justify-between items-start mb-6">
         <div>
@@ -74,13 +75,13 @@ export function SignalCard({ signalObject, currentPrice }) {
       )}
 
       {top_reasons && top_reasons.length > 0 && (
-        <div className="mt-auto">
-          <h3 className="text-sm font-semibold mb-2">Primary Factors:</h3>
-          <ul className="space-y-1.5">
+        <div className="mt-auto space-y-3">
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground opacity-60">Market Intelligence Feed</h3>
+          <ul className="space-y-2">
             {top_reasons.map((r, i) => (
-              <li key={i} className="text-sm text-foreground/80 flex items-start">
-                <span className="text-primary mr-2 mt-0.5">•</span>
-                {r}
+              <li key={i} className="text-[13px] font-medium leading-snug flex items-start group">
+                 <div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 mr-3 shrink-0 shadow-[0_0_8px_rgba(251,191,36,0.4)]" />
+                 <span className="opacity-90 group-hover:opacity-100 transition-opacity">{r}</span>
               </li>
             ))}
           </ul>

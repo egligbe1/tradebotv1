@@ -135,25 +135,64 @@ export default function DashboardPage() {
          </div>
       )}
 
-      {/* Top Grid: Signal Card & Model Votes */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-4 h-full min-h-[400px]">
-            <SignalCard signalObject={dashboardData.signal} currentPrice={dashboardData.currentPrice} />
-        </div>
-        <div className="lg:col-span-8 h-full flex flex-col">
-            <div className="mb-4">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">Model Consensus</h3>
-              <ModelVotes signalObject={dashboardData.signal} />
+      {/* Analysis Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+        
+        {/* Signal & Intelligence Column */}
+        <div className="lg:col-span-4 flex flex-col gap-6">
+            <div className="flex-1 min-h-[460px]">
+              <SignalCard signalObject={dashboardData.signal} currentPrice={dashboardData.currentPrice} />
             </div>
-            <div className="flex-1 min-h-[250px] relative mt-2">
-              <PriceChart 
-                 data={dashboardData.candles} 
-                 height={350} 
-                 support={dashboardData.support}
-                 resistance={dashboardData.resistance}
-                 signal={dashboardData.signal}
-                 symbol={symbol}
-              />
+
+            {/* Live Intelligence Terminal */}
+            <div className="glass-card rounded-2xl p-5 border-white/5 flex flex-col h-[300px]">
+               <div className="flex items-center gap-2 mb-3 text-primary/80">
+                  <Terminal size={14} />
+                  <h3 className="text-[10px] font-bold uppercase tracking-widest">Logic Stream: v2.4.0</h3>
+               </div>
+               <div className="flex-1 overflow-y-auto space-y-2 font-mono text-[11px] scrollbar-hide pr-2">
+                  {logs.map(log => (
+                    <div key={log.id} className="flex gap-3 animate-in fade-in slide-in-from-left-2 duration-300">
+                      <span className="text-white/20 shrink-0">{log.time}</span>
+                      <span className={`${
+                        log.type === 'success' ? 'text-emerald-400' : 
+                        log.type === 'query' ? 'text-blue-400' : 
+                        log.type === 'intel' ? 'text-amber-400' : 'text-white/60'
+                      }`}>
+                        {"> "} {log.msg}
+                      </span>
+                    </div>
+                  ))}
+                  {logs.length === 0 && (
+                    <div className="text-white/20 italic mt-10 text-center">Awaiting data stream...</div>
+                  )}
+               </div>
+            </div>
+        </div>
+
+        {/* Main Chart Column */}
+        <div className="lg:col-span-8 flex flex-col gap-6 h-full">
+            <div className="glass-card rounded-2xl p-6 border-white/5 flex flex-col h-full overflow-hidden">
+               <div className="flex justify-between items-center mb-6">
+                 <div className="flex items-center gap-3">
+                   <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                     <Zap size={18} />
+                   </div>
+                   <h3 className="text-md font-semibold tracking-tight">Institutional High-Resolution Chart</h3>
+                 </div>
+                 <ModelVotes signalObject={dashboardData.signal} />
+               </div>
+               
+               <div className="flex-1 min-h-[500px] relative rounded-xl overflow-hidden border border-white/5 shadow-inner">
+                 <PriceChart 
+                    data={dashboardData.candles} 
+                    height={500} 
+                    support={dashboardData.support}
+                    resistance={dashboardData.resistance}
+                    signal={dashboardData.signal}
+                    symbol={symbol}
+                 />
+               </div>
             </div>
         </div>
       </div>

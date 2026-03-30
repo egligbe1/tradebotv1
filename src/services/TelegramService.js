@@ -18,23 +18,23 @@ export class TelegramService {
         return;
     }
 
-    const action = signalData.signal === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+    const actionEmoji = signalData.signal === 'BUY' ? '🟢' : '🔴';
     const conf = (signalData.confidence * 100).toFixed(1);
     
-    // Using Discord/Telegram friendly Markdown
+    // Using HTML mode for bulletproof parsing (doesn't crash on special chars)
     const message = `
-🚨 *TRADEBOT SIGNAL* 🚨
-*Asset:* ${symbol}
-*Action:* ${action}
-*Conviction:* ${conf}%
+<b>🚨 TRADEBOT SIGNAL 🚨</b>
+<b>Asset:</b> ${symbol}
+<b>Action:</b> ${actionEmoji} ${signalData.signal}
+<b>Conviction:</b> ${conf}%
 
-*Entry:* ${signalData.entry}
-*Stop Loss:* ${signalData.stop_loss}
-*Take Profit 1:* ${signalData.take_profit_1}
-*Take Profit 2:* ${signalData.take_profit_2}
+<b>Entry:</b> ${signalData.entry}
+<b>Stop Loss:</b> ${signalData.stop_loss}
+<b>TP 1:</b> ${signalData.take_profit_1}
+<b>TP 2:</b> ${signalData.take_profit_2}
 
-_Models Aligned: Rule Engine, LSTM, RF, Logistic Regression_
-_Trend Filter: Aligned with Daily 200 EMA_`;
+<i>Models Aligned: Rule Engine, LSTM, RF, Logistic</i>
+<i>Trend Filter: Aligned with Daily 200 EMA</i>`;
 
     const url = `https://api.telegram.org/bot${activeToken}/sendMessage`;
     
@@ -46,7 +46,7 @@ _Trend Filter: Aligned with Daily 200 EMA_`;
         body: JSON.stringify({
           chat_id: activeId,
           text: message,
-          parse_mode: 'Markdown'
+          parse_mode: 'HTML'
         })
       });
       
