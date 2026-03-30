@@ -17,7 +17,7 @@ function getSymbolPrecision(symbol) {
   return { precision: 2, minMove: 0.01 };
 }
 
-export function PriceChart({ data, width = 0, height = 400, support, resistance, signal, symbol = 'EUR/USD' }) {
+export function PriceChart({ data, width = 0, height = 400, support, resistance, supportZones = [], resistanceZones = [], signal, symbol = 'EUR/USD' }) {
   const chartContainerRef = useRef();
   const chartRef = useRef();
 
@@ -85,26 +85,57 @@ export function PriceChart({ data, width = 0, height = 400, support, resistance,
           
           candleSeries.setData(uniqueData);
           
-          // --- Structural Markers ---
-          if (support) {
-             candleSeries.createPriceLine({
-                price: support,
-                color: '#10b981', // green-500
-                lineWidth: 2,
-                lineStyle: 2, // Dashed
-                axisLabelVisible: true,
-                title: 'Support',
-             });
+          // --- Multi-Level Support & Resistance Zones ---
+          const srStyles = [
+            { lineWidth: 2, lineStyle: 0, opacity: 1.0 },   // Primary: Solid, full opacity
+            { lineWidth: 1, lineStyle: 2, opacity: 0.6 },   // Secondary: Dashed, faded
+            { lineWidth: 1, lineStyle: 3, opacity: 0.35 },  // Tertiary: Dotted, ghost
+          ];
+
+          // Draw support zones (green)
+          if (supportZones.length > 0) {
+            supportZones.forEach((zone, idx) => {
+              if (idx < 3 && zone.price) {
+                const style = srStyles[idx];
+                candleSeries.createPriceLine({
+                  price: zone.price,
+                  color: `rgba(16, 185, 129, ${style.opacity})`,
+                  lineWidth: style.lineWidth,
+                  lineStyle: style.lineStyle,
+                  axisLabelVisible: idx === 0,
+                  title: idx === 0 ? `S1 (${zone.touches}x)` : `S${idx+1}`,
+                });
+              }
+            });
+          } else if (support) {
+            // Fallback to single support line
+            candleSeries.createPriceLine({
+              price: support, color: '#10b981', lineWidth: 2, lineStyle: 2,
+              axisLabelVisible: true, title: 'Support',
+            });
           }
-          if (resistance) {
-             candleSeries.createPriceLine({
-                price: resistance,
-                color: '#ef4444', // red-500
-                lineWidth: 2,
-                lineStyle: 2, // Dashed
-                axisLabelVisible: true,
-                title: 'Resistance',
-             });
+
+          // Draw resistance zones (red)
+          if (resistanceZones.length > 0) {
+            resistanceZones.forEach((zone, idx) => {
+              if (idx < 3 && zone.price) {
+                const style = srStyles[idx];
+                candleSeries.createPriceLine({
+                  price: zone.price,
+                  color: `rgba(239, 68, 68, ${style.opacity})`,
+                  lineWidth: style.lineWidth,
+                  lineStyle: style.lineStyle,
+                  axisLabelVisible: idx === 0,
+                  title: idx === 0 ? `R1 (${zone.touches}x)` : `R${idx+1}`,
+                });
+              }
+            });
+          } else if (resistance) {
+            // Fallback to single resistance line
+            candleSeries.createPriceLine({
+              price: resistance, color: '#ef4444', lineWidth: 2, lineStyle: 2,
+              axisLabelVisible: true, title: 'Resistance',
+            });
           }
           if (signal && signal.signal !== 'HOLD' && signal.entry) {
              candleSeries.createPriceLine({
@@ -159,7 +190,7 @@ export function PriceChart({ data, width = 0, height = 400, support, resistance,
         console.log("Error initializing chart:", e);
         return () => {};
     }
-  }, [data, height, support, resistance, signal, symbol]);
+  }, [data, height, support, resistance, supportZones, resistanceZones, signal, symbol]);
 
   return (
     <div className="w-full relative bg-card border border-border rounded-xl overflow-hidden shadow-md">

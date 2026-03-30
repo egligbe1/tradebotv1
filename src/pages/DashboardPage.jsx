@@ -39,6 +39,8 @@ export default function DashboardPage() {
       const latestFeature = features[features.length - 1];
       const support = latestFeature ? latestFeature.support_50 : null;
       const resistance = latestFeature ? latestFeature.resistance_50 : null;
+      const supportZones = latestFeature?._supportZones || [];
+      const resistanceZones = latestFeature?._resistanceZones || [];
 
       setDashboardData(prev => {
           // If the signal was previously HOLD, and is now BUY/SELL, notify!
@@ -55,7 +57,9 @@ export default function DashboardPage() {
              signal: newSignal,
              currentPrice,
              support,
-             resistance
+             resistance,
+             supportZones,
+             resistanceZones
           }
       });
 
@@ -151,6 +155,8 @@ export default function DashboardPage() {
                  height={350} 
                  support={dashboardData.support}
                  resistance={dashboardData.resistance}
+                 supportZones={dashboardData.supportZones || []}
+                 resistanceZones={dashboardData.resistanceZones || []}
                  signal={dashboardData.signal}
                  symbol={symbol}
               />

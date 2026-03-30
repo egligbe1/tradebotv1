@@ -12,6 +12,8 @@ export default function ChartPage() {
   const [error, setError] = useState(null);
   const [support, setSupport] = useState(null);
   const [resistance, setResistance] = useState(null);
+  const [supportZones, setSupportZones] = useState([]);
+  const [resistanceZones, setResistanceZones] = useState([]);
   const [signal, setSignal] = useState(null);
   const apiKey = useStore(state => state.apiKey);
   const symbol = useStore(state => state.symbol);
@@ -36,6 +38,8 @@ export default function ChartPage() {
          const latestFeature = features[features.length - 1];
          setSupport(latestFeature ? latestFeature.support_50 : null);
          setResistance(latestFeature ? latestFeature.resistance_50 : null);
+         setSupportZones(latestFeature?._supportZones || []);
+         setResistanceZones(latestFeature?._resistanceZones || []);
          setSignal(activeSignal);
       }
     } catch (err) {
@@ -75,6 +79,8 @@ export default function ChartPage() {
                 height={window.innerHeight - 150} 
                 support={support}
                 resistance={resistance}
+                supportZones={supportZones}
+                resistanceZones={resistanceZones}
                 signal={signal}
                 symbol={symbol}
              />

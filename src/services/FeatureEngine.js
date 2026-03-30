@@ -161,21 +161,76 @@ export class FeatureEngine {
         row.is_ny = (hour >= 13 && hour < 22) ? 1 : 0;
         row.is_overlap = (hour >= 13 && hour < 16) ? 1 : 0;
 
-        // Support & Resistance (Dynamic)
-        // We look at the last 50 candles to find local extremes
-        if (i >= 50) {
-            const window = sorted.slice(i - 50, i);
-            row.support_50 = Math.min(...window.map(w => w.low));
-            row.resistance_50 = Math.max(...window.map(w => w.high));
+        // Support & Resistance (Fractal Swing Point Detection)
+        // A swing high = candle whose high is the highest of L neighbors on each side
+        // A swing low  = candle whose low is the lowest of L neighbors on each side
+        const SR_LOOKBACK = 5; // fractal order (5 candles each side)
+        const SR_HISTORY  = 200; // how far back to scan for pivots
+        
+        if (i >= SR_LOOKBACK + 1) {
+            const scanStart = Math.max(0, i - SR_HISTORY);
+            const pivotHighs = [];
+            const pivotLows = [];
             
-            // Proximity features
-            row.dist_to_support = (c.close - row.support_50) / row.support_50;
-            row.dist_to_resistance = (row.resistance_50 - c.close) / row.resistance_50;
+            // Detect fractal swing points in the visible history
+            for (let k = scanStart + SR_LOOKBACK; k <= i - SR_LOOKBACK; k++) {
+                let isSwingHigh = true;
+                let isSwingLow = true;
+                const candidateHigh = sorted[k].high;
+                const candidateLow = sorted[k].low;
+                
+                for (let n = 1; n <= SR_LOOKBACK; n++) {
+                    if (sorted[k - n].high >= candidateHigh || sorted[k + n].high >= candidateHigh) isSwingHigh = false;
+                    if (sorted[k - n].low <= candidateLow || sorted[k + n].low <= candidateLow) isSwingLow = false;
+                }
+                
+                if (isSwingHigh) pivotHighs.push(candidateHigh);
+                if (isSwingLow) pivotLows.push(candidateLow);
+            }
+            
+            // Cluster nearby pivots into zones (merge levels within 0.15% of each other)
+            const clusterLevels = (pivots) => {
+                if (pivots.length === 0) return [];
+                const sorted_p = [...pivots].sort((a, b) => a - b);
+                const zones = [];
+                let cluster = [sorted_p[0]];
+                
+                for (let j = 1; j < sorted_p.length; j++) {
+                    const tolerance = cluster[0] * 0.0015; // 0.15% merge band
+                    if (Math.abs(sorted_p[j] - cluster[cluster.length - 1]) <= tolerance) {
+                        cluster.push(sorted_p[j]);
+                    } else {
+                        // Zone price = the average of the cluster; strength = touch count
+                        zones.push({ price: cluster.reduce((a, b) => a + b, 0) / cluster.length, touches: cluster.length });
+                        cluster = [sorted_p[j]];
+                    }
+                }
+                zones.push({ price: cluster.reduce((a, b) => a + b, 0) / cluster.length, touches: cluster.length });
+                // Sort by strength (most touches first)
+                return zones.sort((a, b) => b.touches - a.touches);
+            };
+            
+            const resistanceZones = clusterLevels(pivotHighs).filter(z => z.price > c.close);
+            const supportZones = clusterLevels(pivotLows).filter(z => z.price < c.close);
+            
+            // Primary S/R = the nearest strong level
+            row.support_50 = supportZones.length > 0 ? supportZones[0].price : null;
+            row.resistance_50 = resistanceZones.length > 0 ? resistanceZones[0].price : null;
+            
+            // Store full zone arrays for chart rendering
+            row._supportZones = supportZones.slice(0, 3);  // Top 3 support zones
+            row._resistanceZones = resistanceZones.slice(0, 3); // Top 3 resistance zones
+            
+            // Proximity features for ML
+            row.dist_to_support = row.support_50 ? (c.close - row.support_50) / row.support_50 : null;
+            row.dist_to_resistance = row.resistance_50 ? (row.resistance_50 - c.close) / row.resistance_50 : null;
         } else {
             row.support_50 = null;
             row.resistance_50 = null;
             row.dist_to_support = null;
             row.dist_to_resistance = null;
+            row._supportZones = [];
+            row._resistanceZones = [];
         }
 
         // Pivot Points (Previous Candle Basis)
