@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useStore, AVAILABLE_SYMBOLS } from '@/store/useStore';
 import { dataManager } from '@/services/DataManager';
-import { backtestEngine } from '@/services/BacktestEngine';
+import backtestEngine from '@/services/BacktestEngine.js';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area 
 } from 'recharts';
@@ -132,9 +132,9 @@ export default function BacktestPage() {
                 <h3 className="font-bold">Equity Growth Curve</h3>
                 <div className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">2,000 Candle Simulation</div>
               </div>
-              <div className="h-[400px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={results.equityCurve}>
+              <div className="h-[400px] w-full min-h-[400px] relative">
+                <ResponsiveContainer width="99%" height="100%">
+                  <AreaChart data={results.equityCurve} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                     <defs>
                       <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.3}/>
@@ -194,8 +194,7 @@ export default function BacktestPage() {
                   )}
                </div>
                <div className="p-4 bg-muted/30 border-t border-border text-[10px] text-muted-foreground flex items-center gap-2 italic">
-                  <Info size={12} />
-                  Simulated results only. Past performance != future gains.
+                  <span className="flex items-center gap-1"><Info size={12} /> Simulated results only.</span>
                </div>
             </div>
           </div>

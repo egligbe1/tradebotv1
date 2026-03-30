@@ -148,3 +148,4 @@ export class BacktestEngine {
 }
 
 export const backtestEngine = new BacktestEngine();
+export default backtestEngine;
