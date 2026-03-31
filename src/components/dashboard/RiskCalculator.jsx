@@ -72,10 +72,21 @@ export function RiskCalculator({ signal, currentPrice }) {
               <div className="text-[10px] font-bold text-muted-foreground">{lots} Standard Lots</div>
             </div>
           </div>
+
+          <div className="pt-2 grid grid-cols-2 gap-4">
+            <div className="p-3 bg-emerald-500/5 border border-emerald-500/10 rounded-lg">
+              <div className="text-[9px] font-bold text-emerald-500/80 uppercase mb-1">Target 1 (1:2 RR)</div>
+              <div className="text-base font-bold text-emerald-500">+${(dollarRisk * 2).toLocaleString()}</div>
+            </div>
+            <div className="p-3 bg-emerald-500/5 border border-emerald-500/10 rounded-lg">
+              <div className="text-[9px] font-bold text-emerald-500/80 uppercase mb-1">Target 2 (1:4 RR)</div>
+              <div className="text-base font-bold text-emerald-500">+${(dollarRisk * 4).toLocaleString()}</div>
+            </div>
+          </div>
           
-          <div className="flex items-center gap-2 text-[10px] text-muted-foreground italic leading-tight">
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground italic leading-tight pt-1">
             <ShieldCheck size={12} className="text-emerald-500 shrink-0" />
-            Size calculated to cap total loss at exactly {riskPercent}% if SL is hit.
+            Size calculated to cap total loss at exactly {riskPercent}% (${dollarRisk.toLocaleString()}).
           </div>
         </div>
       </div>

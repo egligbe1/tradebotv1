@@ -27,6 +27,17 @@ export default function DashboardPage() {
   const fetchDashboardData = async () => {
     setLoading(true);
     setError(null);
+    setDashboardData({
+        candles: [],
+        signal: null,
+        currentPrice: null,
+        support: null,
+        resistance: null,
+        supportZone: null,
+        resistanceZone: null,
+        structure: 'NEUTRAL'
+    });
+
     try {
       // 1. Fetch live OHLCV
       const data = await dataManager.getCandles(symbol, '1h', 500);

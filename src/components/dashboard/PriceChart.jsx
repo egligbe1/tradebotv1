@@ -23,6 +23,9 @@ export function PriceChart({ data, width = 0, height = 400, support, resistance,
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
+    
+    // Cleanup previous chart instances to prevent duplicates
+    chartContainerRef.current.innerHTML = '';
 
     let chart;
     try {
