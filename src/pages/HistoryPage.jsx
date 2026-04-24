@@ -18,10 +18,27 @@ export default function HistoryPage() {
      setError(null);
      
      try {
-         // We fetch a larger chunk of memory for a solid backtest
-         const data = await dataManager.getCandles(symbol, '1h', 1000);
-         const { trades, equityCurve, metrics } = await backtestEngine.runBacktest(data.values);
-         setResults({ trades, equityCurve, metrics });
+         // Fetch both 1H and 4H data for high-fidelity backtest
+         const [data1h, data4h] = await Promise.all([
+             dataManager.getCandles(symbol, '1h', 1000),
+             dataManager.getCandles(symbol, '4h', 250)
+         ]);
+
+         const report = await backtestEngine.run(symbol, data1h.values, data4h.values);
+         
+         // Map flat metrics to the structure expected by the old UI (to minimize UI changes)
+         const metrics = {
+            netUnits: report.totalReturn, // Using total return % as a proxy for units if risk is 1%
+            winRate: report.winRate / 100,
+            maxDrawdown: report.maxDrawdown / 100,
+            profitFactor: report.profitFactor
+         };
+
+         setResults({ 
+            trades: report.trades, 
+            equityCurve: report.equityCurve.map((p, i) => ({ index: i, equity: p.value })), 
+            metrics 
+         });
      } catch(e) {
          setError(e.message);
      } finally {
@@ -37,7 +54,7 @@ export default function HistoryPage() {
     <div className="p-6 max-w-7xl mx-auto space-y-6 flex flex-col h-full">
       <div className="flex justify-between items-end shrink-0">
           <div>
-            <h1 className="text-2xl font-bold">Strategy Backtester</h1>
+            <h1 className="text-2xl font-bold">Historical Simulation</h1>
             <p className="text-muted-foreground text-sm">Simulates the current Machine Learning ensemble across historical data.</p>
           </div>
           <button 
@@ -156,8 +173,8 @@ export default function HistoryPage() {
                                 <td className="px-6 py-3">
                                    <span className={`font-bold ${trade.side === 'BUY' ? 'text-green-500' : 'text-red-500'}`}>{trade.side}</span>
                                 </td>
-                                <td className="px-6 py-3 font-mono">{trade.entryPrice.toFixed(5)}</td>
-                                <td className="px-6 py-3 font-mono">{trade.exitPrice?.toFixed(5) || '-'}</td>
+                                <td className="px-6 py-3 font-mono">{trade.entry.toFixed(5)}</td>
+                                <td className="px-6 py-3 font-mono">{trade.exit?.toFixed(5) || '-'}</td>
                                 <td className="px-6 py-3 text-right">
                                     {trade.result === 'WIN' && <span className="bg-green-500/20 text-green-500 px-2 py-0.5 rounded text-xs font-bold">+2.0R</span>}
                                     {trade.result === 'LOSS' && <span className="bg-red-500/20 text-red-500 px-2 py-0.5 rounded text-xs font-bold">-1.0R</span>}

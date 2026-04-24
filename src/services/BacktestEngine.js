@@ -145,6 +145,14 @@ export class BacktestEngine {
     }
     return maxDd * 100;
   }
+  
+  /**
+   * Alias for run() to maintain backward compatibility with older pages.
+   */
+  async runBacktest(candles1h) {
+    // Attempt to fetch 4h candles if we have a way to do so, otherwise pass null
+    return this.run("BACKTEST", candles1h, null);
+  }
 }
 
 export const backtestEngine = new BacktestEngine();
