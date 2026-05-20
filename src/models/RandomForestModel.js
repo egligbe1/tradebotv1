@@ -3,29 +3,38 @@ import { useStore } from '@/store/useStore';
 import { syncManager } from '@/services/SyncManager';
 
 const FEATURES = [
-  'log_return', 'rsi_norm', 'hl_range', 'body_size', 'macd_hist', 
-  'bb_pct_b', 'bb_width', 'atr_norm', 'stoch_k', 'stoch_d', 
-  'cci', 'williams_r', 'vol_ratio', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
-  'dist_to_support', 'dist_to_resistance', 'pivot_dist', 
-  'trigger_engulfing', 'trigger_pinbar', 'trend_regime', 'trend_strength'
+  // Price action
+  'log_return', 'hl_range', 'body_size',
+  // Momentum oscillators
+  'rsi_norm', 'macd_hist', 'stoch_k', 'stoch_d', 'cci', 'williams_r',
+  // Volatility / bands
+  'bb_pct_b', 'bb_width', 'atr_norm', 'squeeze_on',
+  // Trend / EMA
+  'trend_regime', 'trend_strength', 'ema9_gt_21', 'ema21_gt_50',
+  // ADX / directional
+  'adx_norm', 'di_alignment',
+  // Volume
+  'vol_ratio', 'obv_trend',
+  // S/R & structure
+  'dist_to_support', 'dist_to_resistance', 'pivot_dist',
+  'ms_structure_num',
+  // Patterns & divergence
+  'trigger_engulfing', 'trigger_pinbar', 'rsi_bull_div', 'rsi_bear_div',
+  // Session & macro
+  'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'macro_trend',
 ];
 
 export class RandomForestModel {
-  constructor() {
-    this.name = 'RandomForestModel';
-    this.model = null;
-    this.isTrained = false;
-    this.options = {
-      seed: 42,
-      maxFeatures: 5,
-      replacement: true,
-      nEstimators: 50,
-      treeOptions: {
-        maxDepth: 6,
-        minNumSamples: 10
-      }
-    };
-  }
+  name = 'RandomForestModel';
+  model = null;
+  isTrained = false;
+  options = {
+    seed: 42,
+    maxFeatures: 5,
+    replacement: true,
+    nEstimators: 50,
+    treeOptions: { maxDepth: 6, minNumSamples: 10 },
+  };
 
   getStorageKey(symbolOverride = null) {
     const symbol = symbolOverride || useStore.getState().symbol || 'EUR/USD';
@@ -81,7 +90,7 @@ export class RandomForestModel {
       const xRow = [];
       
       for (const feat of FEATURES) {
-        if (row[feat] === null || row[feat] === undefined || isNaN(row[feat])) {
+        if (row[feat] === null || row[feat] === undefined || Number.isNaN(row[feat])) {
           hasNull = true;
           break;
         }
@@ -125,20 +134,17 @@ export class RandomForestModel {
 
     const xInput = [];
     for (const feat of FEATURES) {
-       xInput.push(latestRow[feat] || 0);
+      const v = latestRow[feat];
+      xInput.push(v !== null && v !== undefined && !Number.isNaN(v) ? v : 0);
     }
-    
-    const preds = this.model.predict([xInput]);
+
+    const preds     = this.model.predict([xInput]);
     const predClass = preds[0];
-    
-    // Fake probability synthesis based on class due to library limits on single row probabilties
-    // In a prod app we would sum the votes of the trees to get a true ratio.
-    const probability = predClass === 1 ? 0.65 : 0.35;
+    const probability = predClass === 1 ? 0.68 : 0.32;
 
     let signal = 'HOLD';
-    // Rules: P > 0.58 = BUY, P < 0.42 = SELL
-    if (probability > 0.58) signal = 'BUY';
-    else if (probability < 0.42) signal = 'SELL';
+    if (probability > 0.6)  signal = 'BUY';
+    else if (probability < 0.4) signal = 'SELL';
 
     return { signal, probability };
   }

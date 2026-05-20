@@ -1,106 +1,140 @@
 export class RuleEngine {
-  constructor() {
-    this.name = 'RuleEngine';
+  name = 'RuleEngine';
+
+  // ── Private scoring helpers ─────────────────────────────────────────────
+
+  _trendStrengthScore(row) {
+    let buy = 0; let sell = 0;
+    const { adx, di_alignment } = row;
+    if (adx !== null && adx > 25) { buy += 2; sell += 2; }  // confirmed trend → both sides
+    if (adx !== null && adx < 18) { buy -= 2; sell -= 2; }  // ranging → suppress
+    if (di_alignment === 1)  buy  += 1;
+    if (di_alignment === -1) sell += 1;
+    return { buy, sell };
   }
 
-  /**
-   * Evaluates technical conditions on the latest feature row.
-   * @param {Object} latestRow - The most recent feature matrix row
-   * @returns {Object} { signal, score, probability }
-   */
+  _oscillatorScore(row) {
+    let buy = 0; let sell = 0;
+    const { rsi, rsi_bull_div, rsi_bear_div, macd_hist, macd_hist_lag1, stoch_k, stoch_d } = row;
+    if (rsi && rsi < 30) buy  += 2;
+    if (rsi && rsi > 70) sell += 2;
+    if (rsi_bull_div === 1) buy  += 3;
+    if (rsi_bear_div === 1) sell += 3;
+    if (macd_hist > 0 && macd_hist_lag1 < 0) buy  += 1;
+    if (macd_hist < 0 && macd_hist_lag1 > 0) sell += 1;
+    if (stoch_k > stoch_d && stoch_d < 20)   buy  += 1;
+    if (stoch_k < stoch_d && stoch_d > 80)   sell += 1;
+    return { buy, sell };
+  }
+
+  _emaAlignmentScore(row) {
+    let buy = 0; let sell = 0;
+    const { close, ema9, ema21, ema50, ema9_gt_21, ema21_gt_50, obv_trend } = row;
+    if (close > ema50) buy  += 1;
+    if (close < ema50) sell += 1;
+    if (ema9 > ema21 && ema21 > ema50) buy  += 2;  // full bullish stack
+    if (ema9 < ema21 && ema21 < ema50) sell += 2;  // full bearish stack
+    if (ema9_gt_21  === 1) buy  += 1;
+    if (ema9_gt_21  === 0) sell += 1;
+    if (ema21_gt_50 === 1) buy  += 1;
+    if (ema21_gt_50 === 0) sell += 1;
+    if (obv_trend   === 1)  buy  += 1;
+    if (obv_trend   === -1) sell += 1;
+    return { buy, sell };
+  }
+
+  _volatilityContextScore(row) {
+    let buy = 0; let sell = 0;
+    const { bb_pct_b, squeeze_on, macd_hist, macro_trend, is_overlap } = row;
+    if (bb_pct_b !== null && bb_pct_b < 0.2) buy  += 1;
+    if (bb_pct_b !== null && bb_pct_b > 0.8) sell += 1;
+    if (squeeze_on === 0 && macd_hist > 0)   buy  += 1;  // squeeze released upward
+    if (squeeze_on === 0 && macd_hist < 0)   sell += 1;  // squeeze released downward
+    if (macro_trend === 1)  buy  += 1;
+    if (macro_trend === -1) sell += 1;
+    if (is_overlap  === 1)  { buy += 1; sell += 1; }     // high-liquidity session
+    return { buy, sell };
+  }
+
+  _srProximityScore(row) {
+    let buy = 0; let sell = 0;
+    const { dist_to_support, dist_to_resistance, pivot_dist } = row;
+    if (dist_to_support    !== null && dist_to_support    < 0.001) buy  += 1;
+    if (dist_to_resistance !== null && dist_to_resistance < 0.001) sell += 1;
+    if (pivot_dist !== null && pivot_dist > 0 && Math.abs(pivot_dist) < 0.001) buy  += 1;
+    if (pivot_dist !== null && pivot_dist < 0 && Math.abs(pivot_dist) < 0.001) sell += 1;
+    return { buy, sell };
+  }
+
+  _confluenceBonus(row) {
+    const { trigger_engulfing, trigger_pinbar, trigger_star, dist_to_support, dist_to_resistance } = row;
+    const nearSupport    = dist_to_support    !== null && dist_to_support    < 0.002;
+    const nearResistance = dist_to_resistance !== null && dist_to_resistance < 0.002;
+    const bullPattern    = trigger_engulfing === 1  || trigger_pinbar === 1  || trigger_star === 1;
+    const bearPattern    = trigger_engulfing === -1 || trigger_pinbar === -1 || trigger_star === -1;
+    return {
+      buy:  nearSupport    && bullPattern ? 4 : 0,
+      sell: nearResistance && bearPattern ? 4 : 0,
+    };
+  }
+
+  _patternScore(row) {
+    let buy = 0; let sell = 0;
+    const { trigger_engulfing, trigger_pinbar, trigger_star, vol_ratio } = row;
+
+    if (trigger_engulfing === 1)  buy  += 2;
+    if (trigger_engulfing === -1) sell += 2;
+    if (trigger_pinbar    === 1)  buy  += 2;
+    if (trigger_pinbar    === -1) sell += 2;
+    if (trigger_star      === 1)  buy  += 3;
+    if (trigger_star      === -1) sell += 3;
+
+    // Volume-confirmed engulfing
+    if (vol_ratio > 1.5 && trigger_engulfing === 1)  buy  += 2;
+    if (vol_ratio > 1.5 && trigger_engulfing === -1) sell += 2;
+
+    const conf = this._confluenceBonus(row);
+    return { buy: buy + conf.buy, sell: sell + conf.sell };
+  }
+
+  _marketStructureScore(row) {
+    let buy = 0; let sell = 0;
+    if (row.ms_structure === 'BULLISH') { buy += 4; sell -= 6; }
+    if (row.ms_structure === 'BEARISH') { sell += 4; buy  -= 6; }
+    return { buy, sell };
+  }
+
+  // ── Public predict ──────────────────────────────────────────────────────
+
   predict(latestRow) {
     if (!latestRow) return { signal: 'HOLD', score: 0, probability: 0.5 };
 
-    let buyScore = 0;
+    const scores = [
+      this._trendStrengthScore(latestRow),
+      this._oscillatorScore(latestRow),
+      this._emaAlignmentScore(latestRow),
+      this._volatilityContextScore(latestRow),
+      this._srProximityScore(latestRow),
+      this._patternScore(latestRow),
+      this._marketStructureScore(latestRow),
+    ];
+
+    let buyScore  = 0;
     let sellScore = 0;
+    for (const s of scores) { buyScore += s.buy; sellScore += s.sell; }
 
-    // BUY Conditions
-    if (latestRow.rsi && latestRow.rsi < 35) buyScore += 1; // oversold
-    
-    // MACD histogram positive turn (needs lag data)
-    // We assume the caller or FeatureEngine passed in the lagged hist.
-    if (latestRow.macd_hist > 0 && latestRow.macd_hist_lag1 < 0) buyScore += 1;
-    
-    if (latestRow.close > latestRow.ema50) buyScore += 1; // Price above EMA50
-    if (latestRow.bb_pct_b !== null && latestRow.bb_pct_b < 0.2) buyScore += 1; // Near lower band
-    if (latestRow.ema9_gt_21 === 1) buyScore += 1; // Upward cross or bullish EMA alignment
-    if (latestRow.macro_trend === 1) buyScore += 1; // Macro Bullish Alignment (4H)
-    
-    // Stochastic oversold cross
-    if (latestRow.stoch_k > latestRow.stoch_d && latestRow.stoch_d < 20) buyScore += 1;
-    if (latestRow.is_overlap === 1) buyScore += 1; // London/NY overlap (high liquidity)
-    
-    // SMART TRIGGERS (Engulfing/Pin Bar/SR)
-    const nearSupport = latestRow.dist_to_support !== null && latestRow.dist_to_support < 0.002; // within 0.2%
-    
-    if (latestRow.trigger_engulfing === 1) buyScore += 2;
-    if (latestRow.trigger_pinbar === 1) buyScore += 2;
-    if (latestRow.trigger_star === 1) buyScore += 3; // Stars are Rare but Powerful
-    
-    // Confluence Bonus: Pattern + S/R Zone
-    if (nearSupport && (latestRow.trigger_engulfing === 1 || latestRow.trigger_pinbar === 1 || latestRow.trigger_star === 1)) {
-        buyScore += 4; // MASSIVE CONFLUENCE BOOST
-    }
-
-    // --- Institutional Market Structure Factor ---
-    if (latestRow.ms_structure === 'BULLISH') {
-        buyScore += 4; 
-        sellScore -= 6; // Heavy penalty for selling in bullish structure
-    } else if (latestRow.ms_structure === 'BEARISH') {
-        sellScore += 4;
-        buyScore -= 6; // Heavy penalty for buying in bearish structure
-    }
-
-    if (latestRow.dist_to_support !== null && latestRow.dist_to_support < 0.001) buyScore += 1;
-    if (latestRow.pivot_dist !== null && latestRow.pivot_dist > 0 && latestRow.pivot_dist < 0.001) buyScore += 1;
-
-
-    // SELL Conditions
-    if (latestRow.rsi && latestRow.rsi > 65) sellScore += 1; // overbought
-    if (latestRow.macd_hist < 0 && latestRow.macd_hist_lag1 > 0) sellScore += 1;
-    if (latestRow.close < latestRow.ema50) sellScore += 1; // Price below EMA50
-    if (latestRow.bb_pct_b !== null && latestRow.bb_pct_b > 0.8) sellScore += 1; // Near upper band
-    if (latestRow.ema9_gt_21 === 0) sellScore += 1; // Downward cross or bearish EMA alignment
-    if (latestRow.macro_trend === -1) sellScore += 1; // Macro Bearish Alignment (4H)
-    
-    // Stochastic overbought cross
-    if (latestRow.stoch_k < latestRow.stoch_d && latestRow.stoch_d > 80) sellScore += 1;
-
-    // SMART TRIGGERS (Engulfing/Pin Bar/SR)
-    const nearResistance = latestRow.dist_to_resistance !== null && latestRow.dist_to_resistance < 0.002;
-
-    if (latestRow.trigger_engulfing === -1) sellScore += 2;
-    if (latestRow.trigger_pinbar === -1) sellScore += 2;
-    if (latestRow.trigger_star === -1) sellScore += 3;
-
-    // Confluence Bonus: Pattern + S/R Zone
-    if (nearResistance && (latestRow.trigger_engulfing === -1 || latestRow.trigger_pinbar === -1 || latestRow.trigger_star === -1)) {
-        sellScore += 4; // MASSIVE CONFLUENCE BOOST
-    }
-
-    if (latestRow.dist_to_resistance !== null && latestRow.dist_to_resistance < 0.001) sellScore += 1;
-    if (latestRow.pivot_dist !== null && latestRow.pivot_dist < 0 && Math.abs(latestRow.pivot_dist) < 0.001) sellScore += 1;
-
-
-    // Evaluate deterministic rule outcome
     let signal = 'HOLD';
-    let probability = 0.5; // neutral
+    let probability = 0.5;
 
-    // We require 6+ conditions for "Very Accurate" entries
-    if (buyScore >= 6) {
+    // Threshold 7 requires multiple confluence factors to align
+    if (buyScore >= 7 && buyScore > sellScore) {
       signal = 'BUY';
-      // Map score 6-12 into a probability 0.6 to 0.95
-      probability = 0.5 + Math.min(buyScore, 12) / 24; 
-    } else if (sellScore >= 6) {
+      probability = 0.5 + Math.min(buyScore, 16) / 32;
+    } else if (sellScore >= 7 && sellScore > buyScore) {
       signal = 'SELL';
-      // Map score 6-12 into a probability 0.4 to 0.05
-      probability = 0.5 - Math.min(sellScore, 12) / 24;
+      probability = 0.5 - Math.min(sellScore, 16) / 32;
     }
 
-    return {
-      signal,
-      reasonScore: { buyScore, sellScore },
-      probability
-    };
+    return { signal, reasonScore: { buyScore, sellScore }, probability };
   }
 }

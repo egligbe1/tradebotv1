@@ -3,13 +3,27 @@ import { useStore } from '@/store/useStore';
 import { syncManager } from '@/services/SyncManager';
 
 const FEATURES = [
-  'log_return', 'rsi_norm', 'hl_range', 'body_size', 'macd_hist', 
-  'bb_pct_b', 'bb_width', 'atr_norm', 'stoch_k', 'stoch_d', 
-  'vol_ratio', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
-  'dist_to_support', 'dist_to_resistance', 'pivot_dist', 
-  'trigger_engulfing', 'trigger_pinbar', 'trend_regime', 'trend_strength'
+  // Price action
+  'log_return', 'hl_range', 'body_size',
+  // Momentum oscillators
+  'rsi_norm', 'macd_hist', 'stoch_k', 'stoch_d',
+  // Volatility / bands
+  'bb_pct_b', 'bb_width', 'atr_norm', 'squeeze_on',
+  // Trend / EMA
+  'trend_regime', 'trend_strength', 'ema9_gt_21', 'ema21_gt_50',
+  // ADX / directional
+  'adx_norm', 'di_alignment',
+  // Volume
+  'vol_ratio', 'obv_trend',
+  // S/R & structure
+  'dist_to_support', 'dist_to_resistance', 'pivot_dist',
+  'ms_structure_num',
+  // Patterns & divergence
+  'trigger_engulfing', 'trigger_pinbar', 'rsi_bull_div', 'rsi_bear_div',
+  // Session & macro
+  'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'macro_trend',
 ];
-const LOOKBACK = 24; // H1 candles of features
+const LOOKBACK = 24; // H1 candles of context
 const FEATURE_COUNT = FEATURES.length;
 
 const getModelSavePath = (symbolOverride = null) => {
@@ -180,8 +194,8 @@ export class LSTMModel {
 
     try {
         await this.model.fit(xTrainT, yTrainT, {
-            epochs: 30,
-            batchSize: 64, // Reduced from 128 to prevent long batch calculation stutters
+            epochs: 50,
+            batchSize: 64,
             validationData: [xValT, yValT],
             shuffle: false, // critical for time series
             callbacks: {
@@ -232,18 +246,20 @@ export class LSTMModel {
          for (const row of latestContext) {
              const rowData = [];
              for (const feat of FEATURES) {
-                 rowData.push(row[feat] || 0);
+                 const v = row[feat];
+                 rowData.push(v !== null && v !== undefined && !Number.isNaN(v) ? v : 0);
              }
              seqX.push(rowData);
          }
 
-         const inputTensor = tf.tensor3d([seqX]); // Batch size of 1
-         const predTensor = this.model.predict(inputTensor);
+         const inputTensor = tf.tensor3d([seqX]);
+         const predTensor  = this.model.predict(inputTensor);
          const probability = predTensor.dataSync()[0];
 
+         // Tighter bands → fewer but higher-quality signals
          let signal = 'HOLD';
-         if (probability > 0.62) signal = 'BUY';
-         else if (probability < 0.38) signal = 'SELL';
+         if (probability > 0.65) signal = 'BUY';
+         else if (probability < 0.35) signal = 'SELL';
 
          return { signal, probability };
      });

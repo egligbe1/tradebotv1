@@ -3,21 +3,32 @@ import { Matrix } from 'ml-matrix';
 import { useStore } from '@/store/useStore';
 import { syncManager } from '@/services/SyncManager';
 
-// Features required for the logistic regression model
 const FEATURES = [
-  'log_return', 'rsi_norm', 'hl_range', 'body_size', 'macd_hist', 
-  'bb_pct_b', 'bb_width', 'atr_norm', 'stoch_k', 'stoch_d', 
-  'cci', 'williams_r', 'vol_ratio', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
-  'dist_to_support', 'dist_to_resistance', 'pivot_dist', 
-  'trigger_engulfing', 'trigger_pinbar', 'trend_regime', 'trend_strength'
+  // Price action
+  'log_return', 'hl_range', 'body_size',
+  // Momentum oscillators
+  'rsi_norm', 'macd_hist', 'stoch_k', 'stoch_d', 'cci', 'williams_r',
+  // Volatility / bands
+  'bb_pct_b', 'bb_width', 'atr_norm', 'squeeze_on',
+  // Trend / EMA
+  'trend_regime', 'trend_strength', 'ema9_gt_21', 'ema21_gt_50',
+  // ADX / directional
+  'adx_norm', 'di_alignment',
+  // Volume
+  'vol_ratio', 'obv_trend',
+  // S/R & structure
+  'dist_to_support', 'dist_to_resistance', 'pivot_dist',
+  'ms_structure_num',
+  // Patterns & divergence
+  'trigger_engulfing', 'trigger_pinbar', 'rsi_bull_div', 'rsi_bear_div',
+  // Session & macro
+  'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'macro_trend',
 ];
 
 export class LogisticModel {
-  constructor() {
-    this.name = 'LogisticModel';
-    this.model = null;
-    this.isTrained = false;
-  }
+  name = 'LogisticModel';
+  model = null;
+  isTrained = false;
 
   getStorageKey(symbolOverride = null) {
     const symbol = symbolOverride || useStore.getState().symbol || 'EUR/USD';
@@ -83,7 +94,7 @@ export class LogisticModel {
       const xRow = [];
       
       for (const feat of FEATURES) {
-        if (row[feat] === null || row[feat] === undefined || isNaN(row[feat])) {
+        if (row[feat] === null || row[feat] === undefined || Number.isNaN(row[feat])) {
           hasNull = true;
           break;
         }
@@ -135,8 +146,8 @@ export class LogisticModel {
 
     const xInput = [];
     for (const feat of FEATURES) {
-       // fill missing with 0 temporarily if happens
-       xInput.push(latestRow[feat] || 0);
+      const v = latestRow[feat];
+      xInput.push(v !== null && v !== undefined && !Number.isNaN(v) ? v : 0);
     }
     
     // Predict probability
@@ -149,16 +160,12 @@ export class LogisticModel {
     // *Workaround for ml-logistic regression probabilty*: 
     // ml-logistic-regression provides `predict` which yields [0, 1] class outputs.
     // If it lacks `predictProbabilities`, we'll compute sigmoid(X * W) manually or fake probability.
-    const predClass = probs[0];
-    
-    let probability;
-    if (predClass === 1) probability = 0.65; // Simulated probability over threshold
-    else probability = 0.35; // Simulated probability under threshold
-    
-    // Target threshold rule (Spec: P > 0.60 = BUY, P < 0.40 = SELL)
+    const predClass   = probs[0];
+    const probability = predClass === 1 ? 0.68 : 0.32;
+
     let signal = 'HOLD';
-    if (probability > 0.60) signal = 'BUY';
-    else if (probability < 0.40) signal = 'SELL';
+    if (probability > 0.6)      signal = 'BUY';
+    else if (probability < 0.4) signal = 'SELL';
 
     return { signal, probability };
   }

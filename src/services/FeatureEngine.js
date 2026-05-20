@@ -1,12 +1,13 @@
-import { 
-  rsi, 
-  macd, 
-  bollingerbands, 
-  ema, 
-  atr, 
-  stochastic, 
-  cci, 
-  williamsr 
+import {
+  rsi,
+  macd,
+  bollingerbands,
+  ema,
+  atr,
+  stochastic,
+  cci,
+  williamsr,
+  adx
 } from 'technicalindicators';
 
 export class FeatureEngine {
@@ -61,6 +62,26 @@ export class FeatureEngine {
             const sum = volumes.slice(i - 19, i + 1).reduce((a, b) => a + b, 0);
             volSma20.push(sum / 20);
         }
+    }
+
+    // ADX (14) — trend strength + directional bias
+    const adx14 = adx({ high: highPrices, low: lowPrices, close: closePrices, period: 14 });
+
+    // OBV (On-Balance Volume) — volume-weighted trend confirmation
+    const obvArr = [];
+    let runningObv = 0;
+    for (let i = 0; i < sorted.length; i++) {
+        if (i === 0) { obvArr.push(0); continue; }
+        if (sorted[i].close > sorted[i - 1].close) runningObv += (sorted[i].volume || 0);
+        else if (sorted[i].close < sorted[i - 1].close) runningObv -= (sorted[i].volume || 0);
+        obvArr.push(runningObv);
+    }
+    // 20-period SMA of OBV for trend direction
+    const obvSma20 = [];
+    for (let i = 0; i < obvArr.length; i++) {
+        if (i < 19) { obvSma20.push(null); continue; }
+        const sum = obvArr.slice(i - 19, i + 1).reduce((a, b) => a + b, 0);
+        obvSma20.push(sum / 20);
     }
 
     // Build feature matrix
@@ -140,6 +161,32 @@ export class FeatureEngine {
         const safeVolSma = (volSma20[i] && volSma20[i] > 0) ? volSma20[i] : 1;
         row.vol_ratio = (c.volume || 0) / safeVolSma;
         if (Number.isNaN(row.vol_ratio)) row.vol_ratio = 1.0;
+
+        // ADX / Directional Index
+        const adxVal = padAlign(adx14, 14);
+        row.adx = adxVal ? adxVal.adx : null;
+        row.di_plus = adxVal ? adxVal.pdi : null;
+        row.di_minus = adxVal ? adxVal.mdi : null;
+        row.adx_norm = row.adx !== null ? Math.min(row.adx / 100, 1) : null;
+        row.adx_trending = (row.adx !== null && row.adx > 20) ? 1 : 0;
+        row.di_alignment = (row.di_plus !== null && row.di_minus !== null)
+            ? (row.di_plus > row.di_minus ? 1 : (row.di_minus > row.di_plus ? -1 : 0))
+            : 0;
+
+        // OBV trend (rising/falling vs 20-SMA)
+        row.obv = obvArr[i];
+        const obvSma = obvSma20[i];
+        row.obv_trend = (obvSma !== null) ? (row.obv > obvSma ? 1 : -1) : 0;
+
+        // Squeeze: BB inside Keltner Channel (volatility compression before breakout)
+        // KC width ≈ 3 * ATR / price. BB width = (bb_upper - bb_lower) / bb_middle.
+        // Squeeze on when BB width < KC width.
+        if (b && a && row.bb_width !== null && row.atr_norm !== null) {
+            const kcWidth = 3 * row.atr_norm;
+            row.squeeze_on = row.bb_width < kcWidth ? 1 : 0;
+        } else {
+            row.squeeze_on = 0;
+        }
 
         // Time Features (Requires parsing datetime strings correctly based on interval)
         // Twelve Data 'datetime' format: "2026-03-09 15:00:00"
@@ -357,6 +404,44 @@ export class FeatureEngine {
         
         row.macd_hist_lag1 = i >= 1 ? features[i-1].macd_hist : null;
         row.macd_hist_lag2 = i >= 2 ? features[i-2].macd_hist : null;
+
+        // RSI Divergence detection (hidden bullish/bearish divergence is a high-probability signal)
+        row.rsi_bull_div = 0;
+        row.rsi_bear_div = 0;
+        const DIV_WINDOW = 20;
+        if (i >= DIV_WINDOW && row.rsi !== null) {
+            // Find the most recent local swing LOW in the lookback window
+            let swingLow = null;
+            for (let j = i - 4; j >= Math.max(0, i - DIV_WINDOW); j--) {
+                const jf = features[j];
+                if (jf.rsi === null) continue;
+                const prevClose = j > 0 ? features[j - 1].close : Infinity;
+                const nextClose = j < features.length - 1 ? features[j + 1].close : Infinity;
+                if (jf.close < prevClose && jf.close < nextClose) {
+                    if (!swingLow || jf.close < swingLow.close) swingLow = jf;
+                }
+            }
+            // Bullish divergence: price at/near new low but RSI higher than at that low
+            if (swingLow && row.close <= swingLow.close * 1.003 && row.rsi > swingLow.rsi + 3) {
+                row.rsi_bull_div = 1;
+            }
+
+            // Find the most recent local swing HIGH in the lookback window
+            let swingHigh = null;
+            for (let j = i - 4; j >= Math.max(0, i - DIV_WINDOW); j--) {
+                const jf = features[j];
+                if (jf.rsi === null) continue;
+                const prevClose = j > 0 ? features[j - 1].close : -Infinity;
+                const nextClose = j < features.length - 1 ? features[j + 1].close : -Infinity;
+                if (jf.close > prevClose && jf.close > nextClose) {
+                    if (!swingHigh || jf.close > swingHigh.close) swingHigh = jf;
+                }
+            }
+            // Bearish divergence: price at/near new high but RSI lower than at that high
+            if (swingHigh && row.close >= swingHigh.close * 0.997 && row.rsi < swingHigh.rsi - 3) {
+                row.rsi_bear_div = 1;
+            }
+        }
 
         // Targets (for historical training) - TRIPLE BARRIER METHOD
         const LOOKAHEAD = 24;
