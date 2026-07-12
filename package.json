@@ -8,7 +8,9 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start": "node server.js"
+    "start": "node server.js",
+    "bot": "node server/bot.js",
+    "bot:cli": "node server/cli.js"
   },
   "dependencies": {
     "@radix-ui/react-icons": "^1.3.2",

@@ -1,12 +1,26 @@
-import { useStore } from '@/store/useStore';
+import { useStore, AVAILABLE_SYMBOLS, normalizeSymbol } from '@/store/useStore';
 import { notificationManager } from '@/services/NotificationManager';
 import { telegramService } from '@/services/TelegramService';
-import { Bell, Send, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import { classifySymbol, QUICK_PICKS } from '@/lib/assetConfig';
+import { Bell, Send, CheckCircle2, AlertCircle, RefreshCw, Search, X, TrendingUp } from 'lucide-react';
 import React, { useState } from 'react';
 
 export default function SettingsPage() {
   const apiKey = useStore((state) => state.apiKey);
   const setApiKey = useStore((state) => state.setApiKey);
+
+  const symbol = useStore((state) => state.symbol);
+  const setSymbol = useStore((state) => state.setSymbol);
+  const customSymbols = useStore((state) => state.customSymbols);
+  const addSymbol = useStore((state) => state.addSymbol);
+  const removeSymbol = useStore((state) => state.removeSymbol);
+  const [symbolQuery, setSymbolQuery] = useState('');
+
+  const submitSymbol = (raw) => {
+    const s = normalizeSymbol(raw);
+    if (s) addSymbol(s);
+    setSymbolQuery('');
+  };
   
   const telegramBotToken = useStore((state) => state.telegramBotToken);
   const setTelegramBotToken = useStore((state) => state.setTelegramBotToken);
@@ -70,6 +84,59 @@ export default function SettingsPage() {
               Your API key is stored securely in your browser's local storage and is never sent to any server except Twelve Data.
             </p>
           </div>
+        </div>
+      </div>
+
+      <div className="bg-card p-6 rounded-lg border border-border shadow-sm mb-6">
+        <div className="flex items-center gap-3 mb-4 text-primary">
+          <TrendingUp className="w-5 h-5" />
+          <h2 className="text-lg font-semibold">Trading Instruments</h2>
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">
+          Add any Twelve Data instrument — forex, crypto, metals, stocks or indices. Type a symbol
+          (e.g. <span className="font-mono">AUD/USD</span>, <span className="font-mono">XAG/USD</span>,
+          <span className="font-mono"> NVDA</span>) and press Enter, or pick one below. Costs and market
+          sessions are inferred automatically from the asset class.
+        </p>
+
+        <form onSubmit={(e) => { e.preventDefault(); submitSymbol(symbolQuery); }} className="flex gap-2 mb-4">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={symbolQuery}
+              onChange={(e) => setSymbolQuery(e.target.value)}
+              placeholder="Search / add symbol (BASE/QUOTE or ticker)"
+              className="w-full pl-9 pr-3 py-2 rounded-md bg-background border border-input text-foreground font-mono uppercase focus:ring-2 focus:ring-ring focus:outline-none"
+            />
+          </div>
+          <button type="submit" className="bg-primary text-primary-foreground font-semibold px-4 rounded-md hover:bg-primary/90 transition-colors">Add</button>
+        </form>
+
+        <div className="flex flex-wrap gap-2 mb-4">
+          {QUICK_PICKS.filter((s) => s.includes(symbolQuery.toUpperCase())).slice(0, 14).map((s) => (
+            <button
+              key={s}
+              onClick={() => submitSymbol(s)}
+              className={`text-xs px-2.5 py-1 rounded-full border transition-colors font-mono ${symbol === s ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted/40 border-border hover:bg-muted'}`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+
+        <div className="text-xs text-muted-foreground">
+          <p className="mb-2 uppercase tracking-wide">Active instrument: <span className="font-mono text-foreground">{symbol}</span> <span className="opacity-60">({classifySymbol(symbol)})</span></p>
+          {customSymbols && customSymbols.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {customSymbols.map((s) => (
+                <span key={s} className="inline-flex items-center gap-1 bg-secondary px-2 py-1 rounded font-mono text-secondary-foreground">
+                  <button onClick={() => setSymbol(s)} className="hover:text-primary">{s}</button>
+                  <button onClick={() => removeSymbol(s)} className="text-muted-foreground hover:text-destructive"><X className="w-3 h-3" /></button>
+                </span>
+              ))}
+            </div>
+          )}
+          <p className="mt-2 opacity-60">Built-in: {AVAILABLE_SYMBOLS.join(', ')}</p>
         </div>
       </div>
 

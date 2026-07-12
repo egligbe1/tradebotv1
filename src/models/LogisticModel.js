@@ -1,29 +1,14 @@
-import LogisticRegression from 'ml-logistic-regression';
-import { Matrix } from 'ml-matrix';
 import { useStore } from '@/store/useStore';
 import { syncManager } from '@/services/SyncManager';
+import { rowToVector, LABEL } from '@/lib/featureContract';
+import { buildDirectionalBinary } from '@/models/core/dataset';
+import { trainLogistic, predictLogisticProba } from '@/models/core/logisticCore';
+import { fitCalibrator, calibrate } from '@/models/core/calibration';
+import { brierSkill } from '@/models/core/ensemble';
+import { walkForwardOOS } from '@/models/core/walkforward';
 
-const FEATURES = [
-  // Price action
-  'log_return', 'hl_range', 'body_size',
-  // Momentum oscillators
-  'rsi_norm', 'macd_hist', 'stoch_k', 'stoch_d', 'cci', 'williams_r',
-  // Volatility / bands
-  'bb_pct_b', 'bb_width', 'atr_norm', 'squeeze_on',
-  // Trend / EMA
-  'trend_regime', 'trend_strength', 'ema9_gt_21', 'ema21_gt_50',
-  // ADX / directional
-  'adx_norm', 'di_alignment',
-  // Volume
-  'vol_ratio', 'obv_trend',
-  // S/R & structure
-  'dist_to_support', 'dist_to_resistance', 'pivot_dist',
-  'ms_structure_num',
-  // Patterns & divergence
-  'trigger_engulfing', 'trigger_pinbar', 'rsi_bull_div', 'rsi_bear_div',
-  // Session & macro
-  'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'macro_trend',
-];
+const UP_BAND = 0.58; // P(up) above this ⇒ BUY
+const DOWN_BAND = 0.42; // P(up) below this ⇒ SELL
 
 export class LogisticModel {
   name = 'LogisticModel';
@@ -38,17 +23,11 @@ export class LogisticModel {
   async saveToLocal(symbolOverride = null) {
     if (!this.model || !this.isTrained) return;
     try {
-      const modelData = {
-        weights: this.model.weights,
-        theta: this.model.theta
-      };
-      localStorage.setItem(this.getStorageKey(symbolOverride), JSON.stringify(modelData));
-      
-      // Auto-sync to cloud
+      localStorage.setItem(this.getStorageKey(symbolOverride), JSON.stringify(this.model));
       const symbol = symbolOverride || useStore.getState().symbol;
-      await syncManager.uploadModel(symbol, 'logistic', modelData);
+      await syncManager.uploadModel(symbol, 'logistic', this.model);
     } catch (e) {
-      console.error("[LogisticModel] Save failed:", e.message);
+      console.error('[LogisticModel] Save failed:', e.message);
     }
   }
 
@@ -60,113 +39,51 @@ export class LogisticModel {
         if (!saved) return false;
         modelData = JSON.parse(saved);
       }
-
-      this.model = new LogisticRegression({ numSteps: 1000, learningRate: 0.05 });
-      this.model.weights = modelData.weights;
-      this.model.theta = modelData.theta;
+      if (!modelData || !Array.isArray(modelData.weights)) return false;
+      this.model = modelData;
       this.isTrained = true;
-      
-      // If we loaded from cloud, save to local for faster next boot
-      if (cloudWeights) {
-        localStorage.setItem(this.getStorageKey(), JSON.stringify(modelData));
-      }
-      
-      console.log("[LogisticModel] Loaded weights.");
+      if (cloudWeights) localStorage.setItem(this.getStorageKey(), JSON.stringify(modelData));
+      console.log('[LogisticModel] Loaded weights.');
       return true;
     } catch (e) {
-      console.error("[LogisticModel] Load failed:", e.message);
+      console.error('[LogisticModel] Load failed:', e.message);
       return false;
     }
   }
 
-  /**
-   * Prepares the dataset by extracting required feature columns and dropping null rows.
-   */
-  prepareData(featuresArr) {
-    const X = [];
-    const y = [];
-
-    // Skip the first few rows that might have NULLs due to lag/EMA calculation
-    // Start around index 200 (EMA200 period)
-    for (let i = 200; i < featuresArr.length - 1; i++) { // skip last row because target is unknown
-      const row = featuresArr[i];
-      let hasNull = false;
-      const xRow = [];
-      
-      for (const feat of FEATURES) {
-        if (row[feat] === null || row[feat] === undefined || Number.isNaN(row[feat])) {
-          hasNull = true;
-          break;
-        }
-        xRow.push(row[feat]);
-      }
-
-      if (row.target_class === null) {
-          hasNull = true;
-      }
-
-      if (!hasNull) {
-        X.push(xRow);
-        // ml-logistic-regression requires targets as 0 or 1
-        y.push(row.target_class);
-      }
-    }
-
-    // Optional: standardize X here
-    return { X, y };
-  }
-
   async train(featuresArr, symbolOverride = null) {
-    const { X, y } = this.prepareData(featuresArr);
-    if (X.length < 50) {
-      throw new Error("Not enough clean data to train Logistic Regression (need at least 50 valid rows).");
+    const { X, y } = buildDirectionalBinary(featuresArr);
+    if (X.length < 80) {
+      throw new Error(`Not enough directional rows to train Logistic (${X.length}); need 80+.`);
     }
+    // Purged walk-forward OOS predictions → honest calibration + skill.
+    const wf = walkForwardOOS(X, y, y, {
+      fit: (xt, yt) => trainLogistic(xt, yt),
+      proba: (m, v) => predictLogisticProba(m, v),
+    });
+    const calibrator = fitCalibrator(wf.scores, wf.y);
+    const skill = brierSkill(wf.scores, wf.y);
 
-    // Basic Train/Test split (80/20 chronological walk-forward)
-    const splitIdx = Math.floor(X.length * 0.8);
-    const xTrain = X.slice(0, splitIdx);
-    const yTrain = y.slice(0, splitIdx);
+    // Deploy a model trained on all data except the last (leaky) HORIZON labels.
+    const deployEnd = Math.max(60, X.length - LABEL.HORIZON);
+    const model = trainLogistic(X.slice(0, deployEnd), y.slice(0, deployEnd));
+    model.calibrator = calibrator;
+    model.skill = skill;
 
-    // Initialize & Train
-    this.model = new LogisticRegression({ numSteps: 1000, learningRate: 0.05 });
-
-    // ml-matrix expects Matrix objects for v2.0+ or compatible arrays.
-    // Converting to explicit Matrix/Vector avoids the `to1DArray` error.
-    this.model.train(new Matrix(xTrain), Matrix.columnVector(yTrain));
+    this.model = model;
     this.isTrained = true;
-    console.log(`[LogisticModel] Trained on ${xTrain.length} samples for ${symbolOverride || 'current asset'}.`);
-    
+    console.log(`[LogisticModel] Trained (${deployEnd} rows), OOS skill=${(skill ?? 0).toFixed(3)}.`);
     await this.saveToLocal(symbolOverride);
   }
 
+  /** @returns {{signal, probability, skill}} probability = calibrated P(up) */
   predict(latestRow) {
-    if (!this.isTrained || !this.model) {
-      return { signal: 'HOLD', probability: 0.5 };
-    }
-
-    const xInput = [];
-    for (const feat of FEATURES) {
-      const v = latestRow[feat];
-      xInput.push(v !== null && v !== undefined && !Number.isNaN(v) ? v : 0);
-    }
-    
-    // Predict probability
-    const probs = this.model.predict([xInput]); // returns array of outputs depending on classes
-    // In binary LR, it usually outputs an array (predictions). Some wrappers output probability vectors.
-    // Ensure we capture probability of class 1.
-    // Note: ml-logistic-regression predict() returns binary classes (0 or 1) by default, 
-    // to get score, we actually need to score it manually. Let's just catch the output prediction for now.
-    
-    // *Workaround for ml-logistic regression probabilty*: 
-    // ml-logistic-regression provides `predict` which yields [0, 1] class outputs.
-    // If it lacks `predictProbabilities`, we'll compute sigmoid(X * W) manually or fake probability.
-    const predClass   = probs[0];
-    const probability = predClass === 1 ? 0.68 : 0.32;
-
+    if (!this.isTrained || !this.model) return { signal: 'HOLD', probability: 0.5, skill: null };
+    const raw = predictLogisticProba(this.model, rowToVector(latestRow));
+    const pUp = calibrate(this.model.calibrator, raw);
     let signal = 'HOLD';
-    if (probability > 0.6)      signal = 'BUY';
-    else if (probability < 0.4) signal = 'SELL';
-
-    return { signal, probability };
+    if (pUp >= UP_BAND) signal = 'BUY';
+    else if (pUp <= DOWN_BAND) signal = 'SELL';
+    return { signal, probability: pUp, skill: this.model.skill ?? null };
   }
 }

@@ -185,7 +185,8 @@ class DataManager {
 
     // 2. Fetch from API
     console.log(`[DataManager] Fetching ${fetchOutputSize} candles from API for ${cacheKey}. (Requested: ${outputsize})`);
-    const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=${interval}&outputsize=${fetchOutputSize}&apikey=${apiKey}`;
+    // timezone=UTC so session/hour features line up with the cloud trainer.
+    const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=${interval}&outputsize=${fetchOutputSize}&timezone=UTC&apikey=${apiKey}`;
     
     const apiData = await this.fetchWithRateLimit(url, symbol, interval);
 

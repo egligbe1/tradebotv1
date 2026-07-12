@@ -23,4 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 .env
-.env
+
+# Bot runtime data (paper-trading ledger)
+server/data/
+
+# Temp verification harnesses
+_*.test.mjs

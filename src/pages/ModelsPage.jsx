@@ -81,7 +81,16 @@ export default function ModelsPage() {
      try {
        const data = await dataManager.getCandles(symbol, '1h', 3000);
        const features = FeatureEngine.extractFeatures(data.values);
-       
+
+       // Enrich with the 4h macro trend so the training-time macro_trend feature
+       // matches what the live dashboard computes (avoids train/serve skew).
+       try {
+         const macro = await dataManager.getCandles(symbol, '4h', 1000);
+         FeatureEngine.enrichWithMacroTrend(features, macro.values);
+       } catch (e) {
+         console.log('[ModelsPage] 4h macro enrichment skipped:', e.message);
+       }
+
        // 1. Train Logistic Regression (Fast)
        setTrainingState(prev => ({ ...prev, message: 'Training Logistic Regression...' }));
        await signalAggregator.models.logistic.train(features);
@@ -100,15 +109,17 @@ export default function ModelsPage() {
                  ...prev,
                  epoch: epoch + 1,
                  loss: logs.loss || 0,
-                 accuracy: logs.acc || 0,
-                 message: `Training LSTM epoch ${epoch + 1}/50...`
+                 accuracy: logs.acc || logs.accuracy || 0,
+                 message: `Training LSTM epoch ${epoch + 1} (early-stops when val loss plateaus)...`
              }));
           },
           (stats) => {
              setTrainingState(prev => ({
                 ...prev,
                 sequences: stats.sequences,
-                validRows: stats.validRows
+                validRows: stats.validRows,
+                // Honest out-of-sample accuracy (not training accuracy).
+                accuracy: stats.valAccuracy != null ? stats.valAccuracy : prev.accuracy
              }));
           }
        );
@@ -217,7 +228,7 @@ export default function ModelsPage() {
               </div>
               <div className="flex justify-between text-xs text-muted-foreground font-mono">
                  <span>Loss: {trainingState.loss.toFixed(4)}</span>
-                 <span>Acc: {(trainingState.accuracy * 100).toFixed(1)}%</span>
+                 <span>Val Acc: {(trainingState.accuracy * 100).toFixed(1)}%</span>
                  <span>Seqs: {trainingState.sequences}</span>
               </div>
                {lastTrained && (

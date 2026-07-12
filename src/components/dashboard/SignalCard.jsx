@@ -1,7 +1,12 @@
 import React from 'react';
-import { Share2, Clock, AlertTriangle } from 'lucide-react';
+import { Clock, AlertTriangle } from 'lucide-react';
+import { useStore } from '@/store/useStore';
+import { priceDigits } from '@/lib/assetConfig';
 
-export function SignalCard({ signalObject, currentPrice, structure }) {
+export function SignalCard({ signalObject, structure }) {
+  const symbol = useStore(state => state.symbol);
+  const digits = priceDigits(symbol);
+  const fmt = (v) => (v === null || v === undefined ? '—' : v.toFixed(digits));
   if (!signalObject) {
     return (
        <div className="bg-card border border-border rounded-xl p-6 h-full flex flex-col items-center justify-center text-muted-foreground">
@@ -53,21 +58,21 @@ export function SignalCard({ signalObject, currentPrice, structure }) {
         <div className="grid grid-cols-2 gap-4 mb-6">
           <div className="bg-muted/30 p-3 rounded-lg border border-border/50">
             <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">Entry Price</p>
-            <p className="font-mono font-medium text-lg">{entry?.toFixed(5)}</p>
+            <p className="font-mono font-medium text-lg">{fmt(entry)}</p>
           </div>
           <div className="bg-destructive/10 p-3 rounded-lg border border-destructive/20">
             <p className="text-xs text-destructive mb-1 uppercase tracking-wider">Stop Loss</p>
-            <p className="font-mono font-medium text-lg text-destructive">{stop_loss?.toFixed(5)}</p>
+            <p className="font-mono font-medium text-lg text-destructive">{fmt(stop_loss)}</p>
           </div>
           <div className="bg-green-500/10 p-3 rounded-lg border border-green-500/20">
             <p className="text-xs text-green-500 mb-1 uppercase tracking-wider">Take Profit 1</p>
-            <p className="font-mono font-medium text-lg text-green-500">{take_profit_1?.toFixed(5)}</p>
+            <p className="font-mono font-medium text-lg text-green-500">{fmt(take_profit_1)}</p>
             <p className="text-[10px] text-green-600/70 mt-1">Reward 1:2</p>
           </div>
           <div className="bg-green-500/10 p-3 rounded-lg border border-green-500/20">
             <p className="text-xs text-green-500 mb-1 uppercase tracking-wider">Take Profit 2</p>
-            <p className="font-mono font-medium text-lg text-green-500">{take_profit_2?.toFixed(5)}</p>
-            <p className="text-[10px] text-green-600/70 mt-1">Reward 1:4</p>
+            <p className="font-mono font-medium text-lg text-green-500">{fmt(take_profit_2)}</p>
+            <p className="text-[10px] text-green-600/70 mt-1">Reward 1:3</p>
           </div>
         </div>
       ) : (

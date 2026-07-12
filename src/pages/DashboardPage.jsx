@@ -39,14 +39,22 @@ export default function DashboardPage() {
     });
 
     try {
-      // 1. Fetch live OHLCV
-      const data = await dataManager.getCandles(symbol, '1h', 500);
+      // 1. Fetch live OHLCV (1h for signals, 4h for the macro-trend filter)
+      const data = await dataManager.getCandles(symbol, '1h', 600);
       const candles = data.values;
       const currentPrice = candles[candles.length - 1].close;
 
-      // 2. Generate Features & Signal
+      let macroCandles = null;
+      try {
+        const macro = await dataManager.getCandles(symbol, '4h', 500);
+        macroCandles = macro.values;
+      } catch (e) {
+        console.log('[Dashboard] 4h macro fetch skipped:', e.message);
+      }
+
+      // 2. Generate Features & Signal (macro candles enrich the trend filter)
       const features = FeatureEngine.extractFeatures(candles);
-      const signal = await signalAggregator.generateSignal(features, currentPrice);
+      const signal = await signalAggregator.generateSignal(features, currentPrice, macroCandles);
       
       const latestFeature = features[features.length - 1];
       const support = latestFeature ? latestFeature.support_50 : null;
@@ -57,7 +65,7 @@ export default function DashboardPage() {
 
       setDashboardData(prev => {
           // If the signal was previously HOLD, and is now BUY/SELL, notify!
-          if (prev.signal && prev.signal.signal === 'HOLD' && signal.signal !== 'HOLD' && signal.confidence > 0.40) {
+          if (prev.signal && prev.signal.signal === 'HOLD' && signal.signal !== 'HOLD' && signal.confidence >= 0.12) {
               notificationManager.notifySignal(signal);
           }
           return {

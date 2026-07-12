@@ -73,8 +73,10 @@ function Sidebar() {
 }
 
 function TopBar() {
-  const { toggleSidebar, symbol, setSymbol } = useStore();
-  
+  const { toggleSidebar, symbol, setSymbol, customSymbols } = useStore();
+  const symbols = [...AVAILABLE_SYMBOLS, ...(customSymbols || [])];
+  if (symbol && !symbols.includes(symbol)) symbols.push(symbol);
+
   return (
     <header className="h-16 flex items-center justify-between px-6 bg-card border-b border-border shrink-0">
       <div className="flex items-center">
@@ -87,7 +89,7 @@ function TopBar() {
             onChange={(e) => setSymbol(e.target.value)}
             className="bg-secondary text-secondary-foreground font-mono font-bold text-xl tracking-wider px-3 py-1 rounded-md border-none focus:ring-2 focus:ring-primary cursor-pointer outline-none"
           >
-            {AVAILABLE_SYMBOLS.map(sym => (
+            {symbols.map(sym => (
               <option key={sym} value={sym}>{sym}</option>
             ))}
           </select>

@@ -9,6 +9,7 @@ import {
   williamsr,
   adx
 } from 'technicalindicators';
+import { LABEL } from '../lib/featureContract.js';
 
 export class FeatureEngine {
   
@@ -124,6 +125,12 @@ export class FeatureEngine {
         row.macd_line = m ? m.MACD : null;
         row.macd_signal = m ? m.signal : null;
         row.macd_hist = m ? m.histogram : null;
+        // Price-relative MACD histogram: the raw histogram is in absolute price
+        // units, so its magnitude scales with the asset's price and with any
+        // trend — that breaks a scaler fit on one regime and prevents features
+        // from transferring across assets. Normalizing by price makes it
+        // stationary and comparable across EUR/USD, XAU/USD, BTC/USD, etc.
+        row.macd_hist_norm = (m && c.close) ? m.histogram / c.close : null;
 
         const b = padAlign(bb, 20);
         if (b && b.upper - b.lower !== 0) {
@@ -386,13 +393,43 @@ export class FeatureEngine {
             }
         }
 
+        // ── Smart-money price-action structure ──────────────────────────────
+        // Fair Value Gap (3-candle imbalance): an unfilled gap that price often
+        // returns to. Bullish FVG = candle i-2 high below candle i low.
+        row.fvg_signal = 0;
+        if (i >= 2) {
+            const twoBack = sorted[i - 2];
+            if (c.low > twoBack.high) row.fvg_signal = 1;        // bullish imbalance
+            else if (c.high < twoBack.low) row.fvg_signal = -1;  // bearish imbalance
+        }
+
+        // Liquidity sweep / stop-run: price pierces a recent swing extreme then
+        // closes back inside — the classic stop-hunt reversal price-action
+        // traders fade. +1 = swept lows & reclaimed (bullish), -1 = swept highs.
+        row.liq_sweep = 0;
+        const SWEEP_LOOKBACK = 10;
+        if (i >= SWEEP_LOOKBACK) {
+            let priorHigh = -Infinity;
+            let priorLow = Infinity;
+            for (let k = i - SWEEP_LOOKBACK; k < i; k++) {
+                if (sorted[k].high > priorHigh) priorHigh = sorted[k].high;
+                if (sorted[k].low < priorLow) priorLow = sorted[k].low;
+            }
+            if (c.low < priorLow && c.close > priorLow) row.liq_sweep = 1;
+            else if (c.high > priorHigh && c.close < priorHigh) row.liq_sweep = -1;
+        }
+
         features.push(row);
     }
 
     // Pass 2: Calculate Lag Features and Targets
     for (let i = 0; i < features.length; i++) {
         const row = features[i];
-        
+
+        // Default macro context so rows are "complete" even before 4h
+        // enrichment runs (enrichWithMacroTrend overrides this when available).
+        if (row.macro_trend === undefined) row.macro_trend = 0;
+
         // Lags
         row.return_lag1 = i >= 1 ? features[i-1].log_return : null;
         row.return_lag2 = i >= 2 ? features[i-2].log_return : null;
@@ -443,37 +480,38 @@ export class FeatureEngine {
             }
         }
 
-        // Targets (for historical training) - TRIPLE BARRIER METHOD
-        const LOOKAHEAD = 24;
-        const TP_PCT = 0.005; // 0.5% Take Profit 
-        const SL_PCT = 0.002; // 0.2% Stop Loss 
-        
-        row.target_class = 0; // Default to HOLD/SELL
-        
-        if (i < features.length - 1) {
+        // ── Directional label: symmetric ATR triple-barrier ────────────────
+        // Place UP and DOWN barriers at ±(BARRIER_ATR × ATR) and walk forward
+        // up to HORIZON bars. The FIRST barrier touched decides the class:
+        //   UP (2)  = market rose one barrier before falling one,
+        //   DOWN(0) = fell first,
+        //   NEUTRAL(1) = neither within the horizon (no tradeable move).
+        // This is a genuine DIRECTIONAL target — unlike the old long-only
+        // "did a +0.5% long win" binary that models misread as buy/sell.
+        row.target_dir = null;
+        const atrVal = row.atr;
+        if (i < features.length - 1 && atrVal && atrVal > 0) {
             const entryPrice = row.close;
-            const upperBarrier = entryPrice * (1 + TP_PCT);
-            const lowerBarrier = entryPrice * (1 - SL_PCT);
-            
-            for (let j = 1; j <= LOOKAHEAD; j++) {
+            const barrier = Math.max(LABEL.BARRIER_ATR * atrVal, LABEL.MIN_BARRIER_PCT * entryPrice);
+            const upBarrier = entryPrice + barrier;
+            const downBarrier = entryPrice - barrier;
+
+            let decided = LABEL.NEUTRAL;
+            for (let j = 1; j <= LABEL.HORIZON; j++) {
                 if (i + j >= features.length) break;
-                const futureCandle = features[i + j];
-                
-                if (futureCandle.high >= upperBarrier && futureCandle.low <= lowerBarrier) {
-                    row.target_class = 0; // Ambiguous/volatile crash, assume loss
+                const fc = features[i + j];
+                const hitUp = fc.high >= upBarrier;
+                const hitDown = fc.low <= downBarrier;
+                if (hitUp && hitDown) {
+                    // Both barriers inside one candle → resolve by candle close.
+                    decided = fc.close >= entryPrice ? LABEL.UP : LABEL.DOWN;
                     break;
-                } else if (futureCandle.high >= upperBarrier) {
-                    row.target_class = 1; // Clean Win
-                    break;
-                } else if (futureCandle.low <= lowerBarrier) {
-                    row.target_class = 0; // Loss
-                    break;
-                }
+                } else if (hitUp) { decided = LABEL.UP; break; }
+                else if (hitDown) { decided = LABEL.DOWN; break; }
             }
-        } else {
-            row.target_class = null; // Cannot compute for the very active, unclosed hour
+            row.target_dir = decided;
         }
-        
+
         row.forward_return_1 = (i + 1 < features.length) ? (features[i+1].close - row.close) / row.close : null;
         row.forward_return_3 = (i + 3 < features.length) ? (features[i+3].close - row.close) / row.close : null;
     }

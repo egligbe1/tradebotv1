@@ -3,6 +3,12 @@ import { persist } from 'zustand/middleware';
 
 export const AVAILABLE_SYMBOLS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD', 'BTC/USD', 'ETH/USD', 'SOL/USD'];
 
+// Normalize a user-typed symbol to Twelve Data's "BASE/QUOTE" (or ticker) form.
+export function normalizeSymbol(raw) {
+  if (!raw) return '';
+  return raw.trim().toUpperCase().replace(/\s+/g, '');
+}
+
 export const useStore = create(
   persist(
     (set) => ({
@@ -20,7 +26,20 @@ export const useStore = create(
       setEnableBrowserNotifications: (enabled) => set({ enableBrowserNotifications: enabled }),
 
       symbol: 'EUR/USD',
-      setSymbol: (sym) => set({ symbol: sym }),
+      setSymbol: (sym) => set({ symbol: normalizeSymbol(sym) }),
+
+      // User-added instruments (any Twelve Data symbol) beyond the built-ins.
+      customSymbols: [],
+      addSymbol: (sym) => set((state) => {
+        const s = normalizeSymbol(sym);
+        if (!s || AVAILABLE_SYMBOLS.includes(s) || state.customSymbols.includes(s)) {
+          return { symbol: s || state.symbol };
+        }
+        return { customSymbols: [...state.customSymbols, s], symbol: s };
+      }),
+      removeSymbol: (sym) => set((state) => ({
+        customSymbols: state.customSymbols.filter((s) => s !== sym),
+      })),
 
       timeframe: '1h',
       setTimeframe: (tf) => set({ timeframe: tf }),

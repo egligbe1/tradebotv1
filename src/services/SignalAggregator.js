@@ -4,22 +4,26 @@ import { RandomForestModel } from '@/models/RandomForestModel';
 import { LSTMModel } from '@/models/LSTMModel';
 import { useStore } from '@/store/useStore';
 import { syncManager } from '@/services/SyncManager';
+import { priceDigits } from '@/lib/assetConfig';
+import { fuseCalibrated } from '@/models/core/ensemble';
 
-const CONVICTION_THRESHOLD = 0.5;
-
-function sigNum(sig) {
-  if (sig === 'BUY')  return 1;
-  if (sig === 'SELL') return -1;
-  return 0;
-}
+// Ensemble P(up) must clear 0.5 ± CONVICTION_BAND to fire a directional signal.
+const CONVICTION_BAND = 0.06;
+// Minimum number of models that must independently agree on direction.
+const MIN_CONSENSUS = 2;
+// Stop-loss and take-profit sizing (ATR multiples). The stop sits just beyond
+// the labelling barrier (1.2·ATR) so training payoff and live payoff align.
+const SL_ATR_MULT = 1.5;
+const RR = 2; // reward:risk for TP1
+const RR2 = 3; // reward:risk for TP2
 
 export class SignalAggregator {
   constructor() {
     this.models = {
-      ruleEngine:   new RuleEngine(),
-      logistic:     new LogisticModel(),
+      ruleEngine: new RuleEngine(),
+      logistic: new LogisticModel(),
       randomForest: new RandomForestModel(),
-      lstm:         new LSTMModel(),
+      lstm: new LSTMModel(),
     };
     this.lastLstmSymbol = null;
   }
@@ -30,7 +34,6 @@ export class SignalAggregator {
     const symbol = useStore.getState().symbol || 'EUR/USD';
     const ok = await this.models.lstm.loadModelFromDb();
     if (!ok) {
-      console.log(`[SignalAggregator] LSTM local empty for ${symbol}, checking cloud...`);
       const weights = await syncManager.downloadModel(symbol, 'lstm');
       if (weights) await this.models.lstm.loadModelFromDb(weights);
     }
@@ -43,7 +46,6 @@ export class SignalAggregator {
       const model = this.models[mKey];
       const ok = await model.loadFromLocal();
       if (!ok) {
-        console.log(`[SignalAggregator] ${mKey} local empty for ${symbol}, checking cloud...`);
         const cloudKey = mKey === 'randomForest' ? 'randomforest' : mKey;
         const weights = await syncManager.downloadModel(symbol, cloudKey);
         if (weights) await model.loadFromLocal(weights);
@@ -55,106 +57,72 @@ export class SignalAggregator {
     await Promise.all([this.initializeLstm(), this.initializeOtherModels()]);
   }
 
-  // ── Signal filters ────────────────────────────────────────────────────────
+  // ── Regime / context filters ────────────────────────────────────────────────
 
-  _passesBuyFilter(latestRow) {
-    const isBearishStructure = latestRow.ms_structure === 'BEARISH';
-    const isFightingTrend    = latestRow.trend_regime < -0.01;
-    if (isBearishStructure) {
-      console.log('[SignalAggregator] Filtered BUY: Fighting Bearish Structure.');
-      return false;
-    }
-    if (isFightingTrend) {
-      console.log('[SignalAggregator] Filtered BUY: Fighting Strong Daily Trend.');
-      return false;
-    }
+  _passesBuyFilter(row) {
+    if (row.ms_structure === 'BEARISH') return false;             // don't buy a bearish structure
+    if (row.trend_regime < -0.01) return false;                   // don't fight a strong down daily trend
+    if (row.macro_trend === -1 && row.trend_regime < 0) return false; // macro + local both down
     return true;
   }
 
-  _passesSellFilter(latestRow) {
-    const isBullishStructure = latestRow.ms_structure === 'BULLISH';
-    const isFightingTrend    = latestRow.trend_regime > 0.01;
-    if (isBullishStructure) {
-      console.log('[SignalAggregator] Filtered SELL: Fighting Bullish Structure.');
-      return false;
-    }
-    if (isFightingTrend) {
-      console.log('[SignalAggregator] Filtered SELL: Fighting Strong Daily Trend.');
-      return false;
-    }
+  _passesSellFilter(row) {
+    if (row.ms_structure === 'BULLISH') return false;
+    if (row.trend_regime > 0.01) return false;
+    if (row.macro_trend === 1 && row.trend_regime > 0) return false;
     return true;
   }
 
-  _passesAdxFilter(latestRow) {
-    if (latestRow.adx !== null && latestRow.adx < 18) {
-      console.log(`[SignalAggregator] Filtered signal: ADX ${latestRow.adx.toFixed(1)} indicates ranging market.`);
-      return false;
-    }
+  _passesRegimeFilter(row) {
+    // Skip low-conviction chop: ADX below 18 = no trend to ride.
+    if (row.adx !== null && row.adx !== undefined && row.adx < 18) return false;
+    // Skip dead volatility (nothing to capture) — atr_norm ~ ATR/price.
+    if (row.atr_norm !== null && row.atr_norm !== undefined && row.atr_norm < 0.0003) return false;
     return true;
   }
 
-  _resolveDirection(finalScore, bullVotes, bearVotes, latestRow) {
-    if (finalScore >= CONVICTION_THRESHOLD && bullVotes >= 2 && this._passesBuyFilter(latestRow)) {
-      return 'BUY';
-    }
-    if (finalScore <= -CONVICTION_THRESHOLD && bearVotes >= 2 && this._passesSellFilter(latestRow)) {
-      return 'SELL';
-    }
-    return 'HOLD';
-  }
+  // ── Ensemble fusion ─────────────────────────────────────────────────────────
 
-  // ── Trade parameters ──────────────────────────────────────────────────────
+  _fuse(preds, weights) {
+    // Skill-weighted fusion of each model's CALIBRATED P(up): effective weight =
+    // demonstrated out-of-sample skill × the user's preference weight. A model
+    // no better than the base rate contributes ~nothing.
+    const entries = Object.keys(preds).map((key) => ({
+      key,
+      p: preds[key].probability ?? 0.5,
+      skill: preds[key].skill,
+      userWeight: weights[key] ?? 0,
+    }));
+    const { pEns } = fuseCalibrated(entries);
+    const bullVotes = Object.values(preds).filter((p) => p.signal === 'BUY').length;
+    const bearVotes = Object.values(preds).filter((p) => p.signal === 'SELL').length;
+    return { pEns, bullVotes, bearVotes };
+  }
 
   _calcTradeParams(signal, entry, atr) {
-    if (signal === 'BUY') {
-      const sl  = entry - 2.5 * atr;
-      const risk = entry - sl;
-      return { sl, tp1: entry + 2 * risk, tp2: entry + 4 * risk };
-    }
-    if (signal === 'SELL') {
-      const sl  = entry + 2.5 * atr;
-      const risk = sl - entry;
-      return { sl, tp1: entry - 2 * risk, tp2: entry - 4 * risk };
-    }
+    const risk = SL_ATR_MULT * atr;
+    if (signal === 'BUY') return { sl: entry - risk, tp1: entry + RR * risk, tp2: entry + RR2 * risk };
+    if (signal === 'SELL') return { sl: entry + risk, tp1: entry - RR * risk, tp2: entry - RR2 * risk };
     return { sl: 0, tp1: 0, tp2: 0 };
   }
 
-  // ── Reason generation ─────────────────────────────────────────────────────
+  // ── Reason generation ────────────────────────────────────────────────────────
 
-  _buyReasons(rulePred, latestRow) {
-    const r = [];
-    if (rulePred.reasonScore.buyScore >= 1) r.push('Technical indicators show bullish momentum');
-    if (latestRow.rsi_bull_div === 1)        r.push('Bullish RSI divergence detected');
-    if (latestRow.trigger_engulfing === 1)   r.push('Bullish Engulfing pattern identified');
-    if (latestRow.trigger_pinbar    === 1)   r.push('Bullish Pin Bar / Rejection identified');
-    if (latestRow.trigger_star      === 1)   r.push('Morning Star reversal pattern identified');
-    if (latestRow.dist_to_support !== null && latestRow.dist_to_support < 0.001)
-      r.push('Price is currently testing local Support');
-    if (latestRow.adx !== null && latestRow.adx > 25) r.push('Strong trend confirmed by ADX');
-    r.push('Model ensemble consensus favors upward trend');
-    return r;
-  }
-
-  _sellReasons(rulePred, latestRow) {
-    const r = [];
-    if (rulePred.reasonScore.sellScore >= 1) r.push('Technical indicators show bearish momentum');
-    if (latestRow.rsi_bear_div === 1)         r.push('Bearish RSI divergence detected');
-    if (latestRow.trigger_engulfing === -1)   r.push('Bearish Engulfing pattern identified');
-    if (latestRow.trigger_pinbar    === -1)   r.push('Bearish Pin Bar / Rejection identified');
-    if (latestRow.trigger_star      === -1)   r.push('Evening Star reversal pattern identified');
-    if (latestRow.dist_to_resistance !== null && latestRow.dist_to_resistance < 0.001)
-      r.push('Price is currently testing local Resistance');
-    if (latestRow.adx !== null && latestRow.adx > 25) r.push('Strong trend confirmed by ADX');
-    r.push('Model ensemble consensus favors downward trend');
-    return r;
-  }
-
-  _generateReasons(masterSignal, rulePred, latestRow) {
+  _generateReasons(masterSignal, rulePred, row) {
     if (masterSignal === 'HOLD') return ['Market conditions neutral', 'Insufficient model consensus'];
-    const reasons = masterSignal === 'BUY'
-      ? this._buyReasons(rulePred, latestRow)
-      : this._sellReasons(rulePred, latestRow);
-    return reasons.slice(0, 3);
+    const r = [];
+    const bull = masterSignal === 'BUY';
+    if (bull && rulePred.reasonScore?.buyScore >= 1) r.push('Technical indicators show bullish momentum');
+    if (!bull && rulePred.reasonScore?.sellScore >= 1) r.push('Technical indicators show bearish momentum');
+    if (bull && row.rsi_bull_div === 1) r.push('Bullish RSI divergence detected');
+    if (!bull && row.rsi_bear_div === 1) r.push('Bearish RSI divergence detected');
+    if (row.trigger_engulfing === (bull ? 1 : -1)) r.push(`${bull ? 'Bullish' : 'Bearish'} engulfing pattern`);
+    if (row.trigger_pinbar === (bull ? 1 : -1)) r.push(`${bull ? 'Bullish' : 'Bearish'} pin bar / rejection`);
+    if (bull && row.dist_to_support !== null && row.dist_to_support < 0.001) r.push('Price testing local support');
+    if (!bull && row.dist_to_resistance !== null && row.dist_to_resistance < 0.001) r.push('Price testing local resistance');
+    if (row.adx !== null && row.adx > 25) r.push('Strong trend confirmed by ADX');
+    r.push('Model ensemble consensus favors ' + (bull ? 'upside' : 'downside'));
+    return r.slice(0, 3);
   }
 
   // ── Main entry point ──────────────────────────────────────────────────────
@@ -167,7 +135,7 @@ export class SignalAggregator {
       FeatureEngine.enrichWithMacroTrend(features, macroCandles);
     }
 
-    const weights       = useStore.getState().modelWeights;
+    const weights = useStore.getState().modelWeights;
     const currentSymbol = useStore.getState().symbol;
 
     if (this.lastLstmSymbol !== currentSymbol) {
@@ -175,58 +143,56 @@ export class SignalAggregator {
       this.lastLstmSymbol = currentSymbol;
     }
 
-    const latestRow   = features.at(-1);
-    const rulePred    = this.models.ruleEngine.predict(latestRow);
-    const logisticPred = this.models.logistic.predict(latestRow);
-    const rfPred      = this.models.randomForest.predict(latestRow);
-    const lstmPred    = this.models.lstm.predictSequence(features);
-
-    const scores = {
-      ruleEngine:   sigNum(rulePred.signal)    * weights.ruleEngine,
-      logistic:     sigNum(logisticPred.signal) * weights.logistic,
-      randomForest: sigNum(rfPred.signal)       * weights.randomForest,
-      lstm:         sigNum(lstmPred.signal)     * weights.lstm,
+    const row = features.at(-1);
+    const preds = {
+      ruleEngine: this.models.ruleEngine.predict(row),
+      logistic: this.models.logistic.predict(row),
+      randomForest: this.models.randomForest.predict(row),
+      lstm: this.models.lstm.predictSequence(features),
     };
 
-    const finalScore = Object.values(scores).reduce((a, b) => a + b, 0);
-    const allVotes   = [rulePred.signal, logisticPred.signal, rfPred.signal, lstmPred.signal];
-    const bullVotes  = allVotes.filter(v => v === 'BUY').length;
-    const bearVotes  = allVotes.filter(v => v === 'SELL').length;
+    const { pEns, bullVotes, bearVotes } = this._fuse(preds, weights);
 
-    let masterSignal = this._resolveDirection(finalScore, bullVotes, bearVotes, latestRow);
-    if (masterSignal !== 'HOLD' && !this._passesAdxFilter(latestRow)) masterSignal = 'HOLD';
+    let masterSignal = 'HOLD';
+    if (pEns >= 0.5 + CONVICTION_BAND && bullVotes >= MIN_CONSENSUS
+        && this._passesRegimeFilter(row) && this._passesBuyFilter(row)) {
+      masterSignal = 'BUY';
+    } else if (pEns <= 0.5 - CONVICTION_BAND && bearVotes >= MIN_CONSENSUS
+        && this._passesRegimeFilter(row) && this._passesSellFilter(row)) {
+      masterSignal = 'SELL';
+    }
 
-    const maxWeight  = Math.max(...Object.values(weights), 1);
-    const confidence = Math.min(Math.abs(finalScore) / maxWeight, 1);
+    const confidence = Math.min(Math.abs(pEns - 0.5) * 2, 1);
+    const entry = currentPrice;
+    const atrVal = row.atr || (currentPrice * 0.001);
+    const { sl, tp1, tp2 } = this._calcTradeParams(masterSignal, entry, atrVal);
 
-    const entry      = currentPrice;
-    const currentAtr = latestRow.atr || 0.001;
-    const { sl, tp1, tp2 } = this._calcTradeParams(masterSignal, entry, currentAtr);
-
-    const fmt5 = v => Number(v.toFixed(5));
+    const digits = priceDigits(currentSymbol);
+    const fmt = (v) => Number(v.toFixed(digits));
 
     let invalidation = 'Wait for setup';
     if (masterSignal !== 'HOLD') {
       const side = masterSignal === 'BUY' ? 'below' : 'above';
-      invalidation = `Signal invalidated if price closes ${side} ${sl.toFixed(5)}`;
+      invalidation = `Signal invalidated if price closes ${side} ${fmt(sl)}`;
     }
 
     return {
-      signal:        masterSignal,
+      signal: masterSignal,
       confidence,
-      timestamp:     new Date().toISOString(),
-      entry:         fmt5(entry),
-      stop_loss:     fmt5(sl),
-      take_profit_1: fmt5(tp1),
-      take_profit_2: fmt5(tp2),
-      risk_reward:   2,
+      ensemble_prob_up: pEns,
+      timestamp: new Date().toISOString(),
+      entry: fmt(entry),
+      stop_loss: fmt(sl),
+      take_profit_1: fmt(tp1),
+      take_profit_2: fmt(tp2),
+      risk_reward: RR,
       model_votes: {
-        ruleEngine:   { signal: rulePred.signal,     probability: rulePred.probability },
-        logistic:     { signal: logisticPred.signal,  probability: logisticPred.probability },
-        randomForest: { signal: rfPred.signal,        probability: rfPred.probability },
-        lstm:         { signal: lstmPred.signal,      probability: lstmPred.probability },
+        ruleEngine: { signal: preds.ruleEngine.signal, probability: preds.ruleEngine.probability },
+        logistic: { signal: preds.logistic.signal, probability: preds.logistic.probability },
+        randomForest: { signal: preds.randomForest.signal, probability: preds.randomForest.probability },
+        lstm: { signal: preds.lstm.signal, probability: preds.lstm.probability },
       },
-      top_reasons: this._generateReasons(masterSignal, rulePred, latestRow),
+      top_reasons: this._generateReasons(masterSignal, preds.ruleEngine, row),
       invalidation,
     };
   }

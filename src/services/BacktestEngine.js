@@ -1,5 +1,6 @@
 import { FeatureEngine } from './FeatureEngine.js';
 import { signalAggregator } from './SignalAggregator.js';
+import { getCostModel } from '@/lib/assetConfig';
 
 export class BacktestEngine {
   /**
@@ -16,6 +17,11 @@ export class BacktestEngine {
     }
 
     console.log(`[BacktestEngine] 🧪 Starting simulation for ${symbol} on ${candles1h.length} candles...`);
+
+    // Realistic per-asset trading costs (spread + slippage + commission),
+    // expressed as a fraction of price and charged once per round-trip trade.
+    const cost = getCostModel(symbol);
+    const roundTripCost = cost.roundTrip;
 
     // 1. Prepare Features (Offline static prep)
     const features1h = FeatureEngine.extractFeatures(candles1h);
@@ -58,18 +64,23 @@ export class BacktestEngine {
         }
 
         if (exitPrice) {
-          const pnlPercent = activeTrade.side === 'BUY' 
+          const grossPercent = activeTrade.side === 'BUY'
             ? (exitPrice - activeTrade.entry) / activeTrade.entry
             : (activeTrade.entry - exitPrice) / activeTrade.entry;
-          
+
+          // Charge realistic round-trip cost (spread + slippage + commission).
+          const pnlPercent = grossPercent - roundTripCost;
           const pnlCash = activeTrade.positionSize * pnlPercent;
           balance += pnlCash;
           
+          // Net result after costs (a TP that barely covers spread can still lose).
+          const netResult = pnlPercent > 0 ? 'WIN' : 'LOSS';
           trades.push({
             ...activeTrade,
             exit: exitPrice,
             exitTime: currentBar.datetime,
-            result,
+            result: netResult,
+            barrier: result,
             pnlCash,
             pnlPercent: pnlPercent * 100,
             finalBalance: balance
@@ -108,12 +119,19 @@ export class BacktestEngine {
     }
 
     // C. Calculate Metrics
-    const winRate = trades.length > 0 
-      ? (trades.filter(t => t.result === 'WIN').length / trades.length) * 100 
-      : 0;
-    
+    const wins = trades.filter(t => t.result === 'WIN');
+    const losses = trades.filter(t => t.result === 'LOSS');
+    const winRate = trades.length > 0 ? (wins.length / trades.length) * 100 : 0;
+
     const profitFactor = this._calculateProfitFactor(trades);
     const maxDrawdown = this._calculateMaxDrawdown(equityCurve);
+
+    const avgWinPct = wins.length ? wins.reduce((a, t) => a + t.pnlPercent, 0) / wins.length : 0;
+    const avgLossPct = losses.length ? losses.reduce((a, t) => a + t.pnlPercent, 0) / losses.length : 0;
+    // Expectancy per trade in % of risked capital terms (simple per-trade mean).
+    const expectancyPct = trades.length
+      ? trades.reduce((a, t) => a + t.pnlPercent, 0) / trades.length : 0;
+    const sharpe = this._calculateSharpe(trades);
 
     return {
       symbol,
@@ -124,9 +142,27 @@ export class BacktestEngine {
       winRate,
       profitFactor,
       maxDrawdown,
+      avgWinPct,
+      avgLossPct,
+      expectancyPct,
+      sharpe,
+      costModel: { roundTripCostPct: roundTripCost * 100, assetClass: cost.assetClass },
       trades,
       equityCurve
     };
+  }
+
+  /**
+   * Sharpe ratio of the per-trade return distribution (not annualized — a
+   * comparable, unitless quality measure across assets). Returns 0 with <2 trades.
+   */
+  _calculateSharpe(trades) {
+    if (trades.length < 2) return 0;
+    const rets = trades.map(t => t.pnlPercent);
+    const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
+    const variance = rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length - 1);
+    const std = Math.sqrt(variance);
+    return std > 0 ? mean / std : 0;
   }
 
   _calculateProfitFactor(trades) {

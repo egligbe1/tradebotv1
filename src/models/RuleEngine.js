@@ -104,6 +104,22 @@ export class RuleEngine {
     return { buy, sell };
   }
 
+  // Smart-money price action: liquidity sweeps (stop hunts) and fair-value gaps.
+  // A sweep of liquidity at a level, reclaimed, is one of the highest-quality
+  // reversal reads an experienced price-action trader waits for.
+  _smartMoneyScore(row) {
+    let buy = 0; let sell = 0;
+    const { liq_sweep, fvg_signal, dist_to_support, dist_to_resistance } = row;
+    const nearSupport = dist_to_support !== null && dist_to_support < 0.0025;
+    const nearResistance = dist_to_resistance !== null && dist_to_resistance < 0.0025;
+
+    if (liq_sweep === 1) buy += nearSupport ? 4 : 2;    // swept lows & reclaimed
+    if (liq_sweep === -1) sell += nearResistance ? 4 : 2; // swept highs & rejected
+    if (fvg_signal === 1) buy += 1;                       // bullish imbalance
+    if (fvg_signal === -1) sell += 1;                     // bearish imbalance
+    return { buy, sell };
+  }
+
   // ── Public predict ──────────────────────────────────────────────────────
 
   predict(latestRow) {
@@ -117,6 +133,7 @@ export class RuleEngine {
       this._srProximityScore(latestRow),
       this._patternScore(latestRow),
       this._marketStructureScore(latestRow),
+      this._smartMoneyScore(latestRow),
     ];
 
     let buyScore  = 0;

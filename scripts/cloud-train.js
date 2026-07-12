@@ -1,24 +1,28 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-// Mock browser APIs for Zustand and TFJS imports
+// Mock browser APIs for any transitively-imported modules that expect them.
 global.window = {};
 global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 
 import { createClient } from '@supabase/supabase-js';
 import { FeatureEngine } from '../src/services/FeatureEngine.js';
-
-import { Matrix } from 'ml-matrix';
-import LogisticRegression from 'ml-logistic-regression';
-import { RandomForestClassifier as RFClassifier } from 'ml-random-forest';
+import { buildDirectionalBinary, buildTabular } from '../src/models/core/dataset.js';
+import { trainLogistic, predictLogisticProba } from '../src/models/core/logisticCore.js';
+import { trainRandomForest, loadRandomForest, predictRfProba } from '../src/models/core/rfCore.js';
+import { trainSequenceModel } from '../src/models/core/lstmCore.js';
+import { fitCalibrator } from '../src/models/core/calibration.js';
+import { brierSkill } from '../src/models/core/ensemble.js';
+import { walkForwardOOS } from '../src/models/core/walkforward.js';
+import { FEATURE_COUNT, LOOKBACK, LABEL } from '../src/lib/featureContract.js';
 
 let tf;
 try {
   tf = await import('@tensorflow/tfjs-node');
-  console.log("🚀 Using @tensorflow/tfjs-node (Fast C++ Bindings)");
-} catch (e) {
+  console.log('🚀 Using @tensorflow/tfjs-node (Fast C++ Bindings)');
+} catch {
   tf = await import('@tensorflow/tfjs');
-  console.log("⚠️ Using @tensorflow/tfjs (Slower JS Fallback)");
+  console.log('⚠️ Using @tensorflow/tfjs (Slower JS Fallback)');
 }
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -26,266 +30,142 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SU
 const twelveDataKey = process.env.VITE_TWELVE_DATA_API_KEY || process.env.TWELVE_DATA_API_KEY;
 
 if (!supabaseUrl || !supabaseKey || !twelveDataKey) {
-  console.error("Missing required environment variables!");
+  console.error('Missing required environment variables!');
   process.exit(1);
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
+const AVAILABLE_SYMBOLS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD', 'BTC/USD', 'ETH/USD', 'SOL/USD'];
 
-const AVAILABLE_SYMBOLS = [
-  'EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD', 'BTC/USD', 'ETH/USD', 'SOL/USD'
-];
-
-// Logistic / RF Features
-const FEATURES_22 = [
-  'log_return', 'rsi_norm', 'hl_range', 'body_size', 'macd_hist', 
-  'bb_pct_b', 'bb_width', 'atr_norm', 'stoch_k', 'stoch_d', 
-  'cci', 'williams_r', 'vol_ratio', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
-  'dist_to_support', 'dist_to_resistance', 'pivot_dist', 
-  'trigger_engulfing', 'trigger_pinbar', 'trend_regime', 'trend_strength',
-  'ms_structure_num', 'support_touches', 'resistance_touches'
-];
-
-// LSTM Features
-const FEATURES_20 = [
-    'log_return', 'rsi_norm', 'hl_range', 'body_size', 'macd_hist', 
-    'bb_pct_b', 'bb_width', 'atr_norm', 'stoch_k', 'stoch_d', 
-    'vol_ratio', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
-    'dist_to_support', 'dist_to_resistance', 'pivot_dist', 
-    'trigger_engulfing', 'trigger_pinbar', 'trend_regime', 'trend_strength',
-    'ms_structure_num', 'support_touches', 'resistance_touches'
-];
-const LOOKBACK = 24;
-
-// Utilities
 async function updateStatus(workflowId, asset, message, percent, isTraining = true) {
   console.log(`[Status] ${asset || 'SYS'}: ${message}`);
   try {
     await supabase.from('training_status').upsert({
-         workflow_id: workflowId,
-         current_asset: asset,
-         message: message,
-         progress_percent: percent,
-         is_training: isTraining,
-         updated_at: new Date().toISOString()
+      workflow_id: workflowId,
+      current_asset: asset,
+      message,
+      progress_percent: percent,
+      is_training: isTraining,
+      updated_at: new Date().toISOString(),
     }, { onConflict: 'workflow_id' });
-  } catch (e) {}
+  } catch { /* status table may not exist */ }
 }
 
 async function uploadWeights(symbol, modelName, weightsObj) {
-    try {
-        await supabase.from('model_sync').upsert({
-            symbol: symbol,
-            model_name: modelName,
-            weights: weightsObj,
-            updated_at: new Date().toISOString()
-        }, { onConflict: 'symbol,model_name' });
-    } catch (e) {
-        console.error(`Failed isolating ${modelName} for ${symbol}:`, e.message);
-    }
+  try {
+    await supabase.from('model_sync').upsert({
+      symbol,
+      model_name: modelName,
+      weights: weightsObj,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'symbol,model_name' });
+  } catch (e) {
+    console.error(`Failed uploading ${modelName} for ${symbol}:`, e.message);
+  }
 }
 
-async function fetchHistoricalData(symbol) {
-    const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=1h&outputsize=3000&apikey=${twelveDataKey}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    if (!data.values || data.status === 'error') throw new Error(data.message || 'TwelveData Error');
-    // Map to floats and flip chronologically (TwelveData returns newest first)
-    return data.values.map(d => ({
-        datetime: d.datetime,
-        open: parseFloat(d.open),
-        high: parseFloat(d.high),
-        low: parseFloat(d.low),
-        close: parseFloat(d.close),
-        volume: parseFloat(d.volume) || 0
-    })).reverse();
+async function fetchSeries(symbol, interval, outputsize) {
+  // timezone=UTC keeps session/hour features consistent with the browser.
+  const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=${interval}&outputsize=${outputsize}&timezone=UTC&apikey=${twelveDataKey}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (!data.values || data.status === 'error') throw new Error(data.message || 'TwelveData Error');
+  return data.values.map((d) => ({
+    datetime: d.datetime,
+    open: parseFloat(d.open),
+    high: parseFloat(d.high),
+    low: parseFloat(d.low),
+    close: parseFloat(d.close),
+    volume: parseFloat(d.volume) || 0,
+  })).reverse(); // TwelveData returns newest-first
 }
 
-// Sub-Routines
-function evaluateRF(model, xTest, yTest) {
-    const preds = model.predict(xTest);
-    let correct = 0;
-    for (let i = 0; i < preds.length; i++) {
-        if (preds[i] === yTest[i]) correct++;
-    }
-    return correct / yTest.length;
+async function buildFeatures(symbol) {
+  const [c1h, c4h] = await Promise.all([
+    fetchSeries(symbol, '1h', 5000),
+    fetchSeries(symbol, '4h', 2000).catch(() => null),
+  ]);
+  const features = FeatureEngine.extractFeatures(c1h);
+  if (c4h) FeatureEngine.enrichWithMacroTrend(features, c4h);
+  return features;
 }
 
-function trainLogistic(featuresArr, symbol) {
-    const X = [], y = [];
-    for (const row of featuresArr) {
-        let hasNull = false;
-        const rowData = [];
-        for (const feat of FEATURES_22) {
-            if (row[feat] == null || isNaN(row[feat])) { hasNull = true; break; }
-            rowData.push(row[feat]);
-        }
-        if (row.target_class == null) hasNull = true;
-        if (!hasNull) { X.push(rowData); y.push(row.target_class); }
-    }
-    const splitIdx = Math.floor(X.length * 0.8);
-    const xTrain = X.slice(0, splitIdx);
-    const yTrain = y.slice(0, splitIdx);
-
-    const model = new LogisticRegression({ numSteps: 1000, learningRate: 0.05 });
-    model.train(new Matrix(xTrain), Matrix.columnVector(yTrain));
-    return { weights: model.weights, theta: model.theta };
-}
-
-function trainRandomForest(featuresArr, symbol) {
-    const X = [], y = [];
-    for (const row of featuresArr) {
-        let hasNull = false;
-        const rowData = [];
-        for (const feat of FEATURES_22) {
-            if (row[feat] == null || isNaN(row[feat])) { hasNull = true; break; }
-            rowData.push(row[feat]);
-        }
-        if (row.target_class == null) hasNull = true;
-        if (!hasNull) { X.push(rowData); y.push(row.target_class); }
-    }
-    
-    const splitIdx = Math.floor(X.length * 0.8);
-    const xTrain = X.slice(0, splitIdx);
-    const yTrain = y.slice(0, splitIdx);
-    const xVal = X.slice(splitIdx);
-    const yVal = y.slice(splitIdx);
-
-    // Expanded Institutional Grid Search
-    const grids = [
-        { maxFeatures: 5, nEstimators: 100, treeOptions: { maxDepth: 6, minNumSamples: 10 } }, // Balanced architecture
-        { maxFeatures: 7, nEstimators: 150, treeOptions: { maxDepth: 10, minNumSamples: 5 } }, // Deep geometry (heavy trends)
-        { maxFeatures: 8, nEstimators: 200, treeOptions: { maxDepth: 12, minNumSamples: 2 } }  // Ultra-precise fractal capture
-    ];
-
-    let bestModel = null;
-    let bestAcc = -1;
-    let bestGrid = null;
-
-    console.log(`   └─ Grid Searching Hyperparameters...`);
-    for (const grid of grids) {
-        const model = new RFClassifier({ seed: 42, replacement: true, ...grid });
-        model.train(xTrain, yTrain);
-        const acc = evaluateRF(model, xVal, yVal);
-        
-        if (acc > bestAcc) {
-            bestAcc = acc;
-            bestModel = model;
-            bestGrid = grid;
-        }
-    }
-    
-    console.log(`   ✨ [Tuner Selected] Depth: ${bestGrid.treeOptions.maxDepth} | Trees: ${bestGrid.nEstimators} | Val Acc: ${(bestAcc*100).toFixed(1)}%`);
-    return bestModel.toJSON();
-}
-
-async function trainLSTM(featuresArr, symbol) {
-    const cleanRows = [];
-    for (const row of featuresArr) {
-        let hasNull = false;
-        const rowData = [];
-        for (const feat of FEATURES_20) {
-            if (row[feat] == null || isNaN(row[feat])) { hasNull = true; break; }
-            rowData.push(row[feat]);
-        }
-        if (row.target_class == null) hasNull = true;
-        if (!hasNull) cleanRows.push({ x: rowData, y: row.target_class });
-    }
-    
-    const X = [], y = [];
-    if (cleanRows.length > LOOKBACK) {
-        for (let i = 0; i < cleanRows.length - LOOKBACK; i++) {
-            const seqX = [];
-            for (let j = 0; j < LOOKBACK; j++) seqX.push(cleanRows[i + j].x);
-            X.push(seqX);
-            y.push(cleanRows[i + LOOKBACK - 1].y);
-        }
-    }
-
-    const model = tf.sequential();
-    model.add(tf.layers.lstm({ units: 128, returnSequences: true, inputShape: [LOOKBACK, FEATURES_20.length] }));
-    model.add(tf.layers.dropout({ rate: 0.2 }));
-    model.add(tf.layers.lstm({ units: 64, returnSequences: true }));
-    model.add(tf.layers.dropout({ rate: 0.2 }));
-    model.add(tf.layers.lstm({ units: 32, returnSequences: false }));
-    model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
-    model.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
-
-    model.compile({ optimizer: tf.train.adam(0.001), loss: 'binaryCrossentropy', metrics: ['accuracy'] });
-
-    const splitIdx = Math.floor(X.length * 0.8);
-    const xTrainT = tf.tensor3d(X.slice(0, splitIdx));
-    const yTrainT = tf.tensor2d(y.slice(0, splitIdx), [splitIdx, 1]);
-    const xValT = tf.tensor3d(X.slice(splitIdx));
-    const yValT = tf.tensor2d(y.slice(splitIdx), [X.length - splitIdx, 1]);
-
-    // Asymmetric Label Penalization (Class Weighting)
-    const trainYArray = y.slice(0, splitIdx);
-    const count1 = trainYArray.filter(v => v === 1).length;
-    const count0 = trainYArray.length - count1;
-    
-    // Mathematically penalize the AI if it misses a high-quality Buy setup structure by artificially magnifying WIN targets.
-    const weight0 = 1.0;
-    const weight1 = count1 > 0 ? (count0 / count1) * 1.5 : 1.0;
-    
-    // Auto-Destruct fitting loop if model begins memorizing noise (Overfitting)
-    const earlyStopping = tf.callbacks.earlyStopping({ monitor: 'val_loss', patience: 5 });
-
-    await model.fit(xTrainT, yTrainT, {
-        epochs: 50,
-        batchSize: 128,
-        validationData: [xValT, yValT],
-        shuffle: false,
-        classWeight: { 0: weight0, 1: weight1 },
-        callbacks: [earlyStopping]
-    });
-
-    xTrainT.dispose(); yTrainT.dispose(); xValT.dispose(); yValT.dispose();
-
-    // Export Cloud Weights
-    let savedArtifacts = null;
-    await model.save(tf.io.withSaveHandler(async (artifacts) => {
-        savedArtifacts = artifacts;
-        return { modelArtifactsInfo: { dateSaved: new Date(), modelTopologyType: 'JSON' } };
-    }));
-    return savedArtifacts;
-}
-
-// --- Main Execution ---
 async function runBatch() {
-    const workflowId = process.env.GITHUB_RUN_ID || `local-${Date.now()}`;
-    await updateStatus(workflowId, 'SYS', 'Booting GitHub Cloud Training...', 0);
+  const workflowId = process.env.GITHUB_RUN_ID || `local-${Date.now()}`;
+  await updateStatus(workflowId, 'SYS', 'Booting cloud training…', 0);
 
-    for (let i = 0; i < AVAILABLE_SYMBOLS.length; i++) {
-        const sym = AVAILABLE_SYMBOLS[i];
-        const pctBase = (i / AVAILABLE_SYMBOLS.length) * 100;
-        
-        try {
-            await updateStatus(workflowId, sym, `Fetching Twelve Data history.`, pctBase + 1);
-            const candles = await fetchHistoricalData(sym);
-            const features = FeatureEngine.extractFeatures(candles);
+  for (let i = 0; i < AVAILABLE_SYMBOLS.length; i++) {
+    const sym = AVAILABLE_SYMBOLS[i];
+    const pctBase = (i / AVAILABLE_SYMBOLS.length) * 100;
 
-            await updateStatus(workflowId, sym, `Training Logistic Regression.`, pctBase + 3);
-            const logWeights = trainLogistic(features, sym);
-            await uploadWeights(sym, 'logistic', logWeights);
+    try {
+      await updateStatus(workflowId, sym, 'Fetching Twelve Data history.', pctBase + 1);
+      const features = await buildFeatures(sym);
 
-            await updateStatus(workflowId, sym, `Training Random Forest.`, pctBase + 5);
-            const rfWeights = trainRandomForest(features, sym);
-            await uploadWeights(sym, 'randomforest', rfWeights);
-
-            await updateStatus(workflowId, sym, `Compiling LSTM Deep Neural Net.`, pctBase + 7);
-            const lstmWeights = await trainLSTM(features, sym);
-            await uploadWeights(sym, 'lstm', lstmWeights);
-
-        } catch (e) {
-            console.error(`Error processing ${sym}:`, e);
-            await updateStatus(workflowId, sym, `Error: ${e.message}`, pctBase);
+      // Logistic (directional UP vs DOWN) — train early slice, calibrate on later.
+      await updateStatus(workflowId, sym, 'Training Logistic Regression.', pctBase + 3);
+      {
+        const { X, y } = buildDirectionalBinary(features);
+        if (X.length >= 100) {
+          const wf = walkForwardOOS(X, y, y, {
+            fit: (xt, yt) => trainLogistic(xt, yt),
+            proba: (m, v) => predictLogisticProba(m, v),
+          });
+          const deployEnd = Math.max(60, X.length - LABEL.HORIZON);
+          const model = trainLogistic(X.slice(0, deployEnd), y.slice(0, deployEnd));
+          model.calibrator = fitCalibrator(wf.scores, wf.y);
+          model.skill = brierSkill(wf.scores, wf.y);
+          await uploadWeights(sym, 'logistic', model);
+          console.log(`   └─ ${sym} logistic OOS skill=${(model.skill ?? 0).toFixed(3)}`);
+        } else {
+          console.warn(`   └─ ${sym}: only ${X.length} logistic rows, skipping.`);
         }
-    }
+      }
 
-    await updateStatus(workflowId, 'COMPLETE', 'Batch training finished!', 100, false);
-    console.log("Cloud training completely successfully.");
-    process.exit(0);
+      // Random Forest (3-class directional) + walk-forward calibration.
+      await updateStatus(workflowId, sym, 'Training Random Forest.', pctBase + 5);
+      {
+        const { X, y } = buildTabular(features);
+        if (X.length >= 100) {
+          const yUp = y.map((v) => (v === LABEL.UP ? 1 : 0));
+          const wf = walkForwardOOS(X, y, yUp, {
+            fit: (xt, yt) => loadRandomForest(trainRandomForest(xt, yt)),
+            proba: (m, v) => predictRfProba(m, v)[2],
+          });
+          const deployEnd = Math.max(60, X.length - LABEL.HORIZON);
+          const json = trainRandomForest(X.slice(0, deployEnd), y.slice(0, deployEnd));
+          const calibrator = fitCalibrator(wf.scores, wf.y);
+          const skill = brierSkill(wf.scores, wf.y);
+          await uploadWeights(sym, 'randomforest', { model: json, calibrator, skill });
+          console.log(`   └─ ${sym} RF OOS skill=${(skill ?? 0).toFixed(3)}`);
+        } else {
+          console.warn(`   └─ ${sym}: only ${X.length} RF rows, skipping.`);
+        }
+      }
+
+      // LSTM (3-class softmax) with scaler + early stopping + class weights + calibration.
+      await updateStatus(workflowId, sym, 'Compiling LSTM Deep Neural Net.', pctBase + 7);
+      {
+        const { model, scaler, metrics } = await trainSequenceModel(tf, features, {
+          onEpoch: (e, logs) => console.log(`   └─ ${sym} LSTM epoch ${e + 1} loss=${(logs.loss || 0).toFixed(4)} val=${(logs.val_loss || 0).toFixed(4)}`),
+        });
+        const calibrator = fitCalibrator(metrics?.valProbsUp || [], metrics?.valYup || []);
+        const skill = brierSkill(metrics?.valProbsUp || [], metrics?.valYup || []);
+        let artifacts = null;
+        await model.save(tf.io.withSaveHandler(async (a) => { artifacts = a; return { modelArtifactsInfo: { dateSaved: new Date(), modelTopologyType: 'JSON' } }; }));
+        await uploadWeights(sym, 'lstm', { artifacts, scaler, calibrator, skill, featureCount: FEATURE_COUNT, lookback: LOOKBACK });
+        console.log(`   └─ ${sym} LSTM skill=${(skill ?? 0).toFixed(3)} valAcc=${((metrics?.valAccuracy ?? 0) * 100).toFixed(1)}%`);
+        model.dispose?.();
+      }
+    } catch (e) {
+      console.error(`Error processing ${sym}:`, e);
+      await updateStatus(workflowId, sym, `Error: ${e.message}`, pctBase);
+    }
+  }
+
+  await updateStatus(workflowId, 'COMPLETE', 'Batch training finished!', 100, false);
+  console.log('Cloud training completed successfully.');
+  process.exit(0);
 }
 
 runBatch();

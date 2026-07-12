@@ -1,267 +1,161 @@
 import * as tf from '@tensorflow/tfjs';
 import { useStore } from '@/store/useStore';
 import { syncManager } from '@/services/SyncManager';
+import { FEATURE_COUNT, LOOKBACK, rowToVector, rowIsComplete } from '@/lib/featureContract';
+import { trainSequenceModel, predictSequenceProba } from '@/models/core/lstmCore';
+import { fitCalibrator, calibrate } from '@/models/core/calibration';
+import { brierSkill } from '@/models/core/ensemble';
 
-const FEATURES = [
-  // Price action
-  'log_return', 'hl_range', 'body_size',
-  // Momentum oscillators
-  'rsi_norm', 'macd_hist', 'stoch_k', 'stoch_d',
-  // Volatility / bands
-  'bb_pct_b', 'bb_width', 'atr_norm', 'squeeze_on',
-  // Trend / EMA
-  'trend_regime', 'trend_strength', 'ema9_gt_21', 'ema21_gt_50',
-  // ADX / directional
-  'adx_norm', 'di_alignment',
-  // Volume
-  'vol_ratio', 'obv_trend',
-  // S/R & structure
-  'dist_to_support', 'dist_to_resistance', 'pivot_dist',
-  'ms_structure_num',
-  // Patterns & divergence
-  'trigger_engulfing', 'trigger_pinbar', 'rsi_bull_div', 'rsi_bear_div',
-  // Session & macro
-  'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'macro_trend',
-];
-const LOOKBACK = 24; // H1 candles of context
-const FEATURE_COUNT = FEATURES.length;
+// Probability band around 1/3 (chance level for 3 classes) that a directional
+// class must clear before we treat it as a vote rather than noise.
+const UP_THRESHOLD = 0.45;
+const DOWN_THRESHOLD = 0.45;
 
-const getModelSavePath = (symbolOverride = null) => {
-    const symbol = symbolOverride || useStore.getState().symbol || 'EUR/USD';
-    const formattedSymbol = symbol.replace('/', '').toLowerCase();
-    return `indexeddb://${formattedSymbol}-lstm-model`;
+const symKey = (symbolOverride = null) => {
+  const symbol = symbolOverride || useStore.getState().symbol || 'EUR/USD';
+  return symbol.replace('/', '').toLowerCase();
 };
+const getModelSavePath = (symbolOverride = null) => `indexeddb://${symKey(symbolOverride)}-lstm-model`;
+const getScalerKey = (symbolOverride = null) => `tradebot_lstm_scaler_${symKey(symbolOverride)}`;
 
 export class LSTMModel {
   constructor() {
     this.name = 'LSTMModel';
     this.model = null;
+    this.scaler = null;
+    this.calibrator = null;
+    this.skill = null;
     this.isTrained = false;
+  }
+
+  _saveScalerLocal(symbolOverride = null) {
+    try {
+      localStorage.setItem(getScalerKey(symbolOverride), JSON.stringify({
+        scaler: this.scaler, calibrator: this.calibrator, skill: this.skill,
+        featureCount: FEATURE_COUNT, lookback: LOOKBACK,
+      }));
+    } catch (e) { console.warn('[LSTMModel] scaler save failed:', e.message); }
+  }
+
+  _loadScalerLocal(symbolOverride = null) {
+    try {
+      const raw = localStorage.getItem(getScalerKey(symbolOverride));
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch { return null; }
+  }
+
+  _shapeMatches(model) {
+    const expected = [null, LOOKBACK, FEATURE_COUNT];
+    const actual = model.layers[0].batchInputShape;
+    return actual && actual[1] === expected[1] && actual[2] === expected[2];
   }
 
   async loadModelFromDb(cloudWeights = null, symbolOverride = null) {
     try {
       if (cloudWeights) {
-        // Construct model from cloud artifacts
-        const modelArtifacts = cloudWeights;
-        const loadedModel = await tf.loadLayersModel(tf.io.fromMemory(modelArtifacts));
-        this.model = loadedModel;
-        this.model.compile({
-            optimizer: tf.train.adam(0.001),
-            loss: 'binaryCrossentropy',
-            metrics: ['accuracy']
-        });
+        // Cloud payload shape: { artifacts, scaler, featureCount, lookback }.
+        const payload = cloudWeights.artifacts ? cloudWeights : { artifacts: cloudWeights, scaler: null };
+        const loaded = await tf.loadLayersModel(tf.io.fromMemory(payload.artifacts));
+        if (!this._shapeMatches(loaded)) {
+          console.warn('[LSTMModel] Cloud model shape mismatch with current feature contract. Discarding.');
+          loaded.dispose?.();
+          return false;
+        }
+        this.model = loaded;
+        this.model.compile({ optimizer: tf.train.adam(0.001), loss: 'categoricalCrossentropy', metrics: ['accuracy'] });
+        this.scaler = payload.scaler || this._loadScalerLocal(symbolOverride)?.scaler || null;
+        this.calibrator = payload.calibrator || null;
+        this.skill = payload.skill ?? null;
         this.isTrained = true;
-        // Also save to IndexedDB for faster local load next time
         await this.model.save(getModelSavePath(symbolOverride));
-        console.log("[LSTMModel] Restored from Cloud artifacts.");
+        this._saveScalerLocal(symbolOverride);
+        console.log('[LSTMModel] Restored from cloud artifacts.');
         return true;
       }
 
-      const path = getModelSavePath(symbolOverride);
-      const loadedModel = await tf.loadLayersModel(path);
-      
-      // Verify input shape matches current FEATURE_COUNT
-      const expectedShape = [null, LOOKBACK, FEATURE_COUNT];
-      const actualShape = loadedModel.layers[0].batchInputShape;
-      
-      // Comparison logic for shapes
-      const isMatch = actualShape && 
-                      actualShape[1] === expectedShape[1] && 
-                      actualShape[2] === expectedShape[2];
-
-      if (!isMatch) {
-         console.warn(`[LSTMModel] Model shape mismatch. Expected ${JSON.stringify(expectedShape)}, Got ${JSON.stringify(actualShape)}. Discarding legacy model.`);
-         this.model = null;
-         this.isTrained = false;
-         return false;
+      const loaded = await tf.loadLayersModel(getModelSavePath(symbolOverride));
+      if (!this._shapeMatches(loaded)) {
+        console.warn('[LSTMModel] Local model shape mismatch. Requires retrain.');
+        loaded.dispose?.();
+        this.model = null; this.isTrained = false;
+        return false;
       }
-
-      this.model = loadedModel;
-      this.model.compile({
-          optimizer: tf.train.adam(0.001),
-          loss: 'binaryCrossentropy',
-          metrics: ['accuracy']
-      });
+      this.model = loaded;
+      this.model.compile({ optimizer: tf.train.adam(0.001), loss: 'categoricalCrossentropy', metrics: ['accuracy'] });
+      const stored = this._loadScalerLocal(symbolOverride);
+      this.scaler = stored?.scaler || null;
+      this.calibrator = stored?.calibrator || null;
+      this.skill = stored?.skill ?? null;
       this.isTrained = true;
-      console.log("[LSTMModel] Loaded existing weights from IndexedDB.");
+      if (!this.scaler) console.warn('[LSTMModel] Loaded model but no scaler found; predictions may be degraded until retrain.');
+      console.log('[LSTMModel] Loaded existing weights from IndexedDB.');
       return true;
-    } catch (e) {
-      console.log("[LSTMModel] No valid model found in DB or error loading, requires training.");
+    } catch {
+      console.log('[LSTMModel] No valid model in DB; requires training.');
       this.isTrained = false;
       return false;
     }
   }
 
-  buildModel() {
-    this.model = tf.sequential();
-    
-    // LSTM(64) -> Dropout(0.2)
-    this.model.add(tf.layers.lstm({
-      units: 64,
-      returnSequences: true,
-      inputShape: [LOOKBACK, FEATURE_COUNT]
-    }));
-    this.model.add(tf.layers.dropout({ rate: 0.2 }));
-
-    // LSTM(32) -> Dropout(0.2)
-    this.model.add(tf.layers.lstm({
-      units: 32,
-      returnSequences: false
-    }));
-    this.model.add(tf.layers.dropout({ rate: 0.2 }));
-
-    // Dense(16) -> Dense(1)
-    this.model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
-    this.model.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
-
-    this.model.compile({
-      optimizer: tf.train.adam(0.001),
-      loss: 'binaryCrossentropy',
-      metrics: ['accuracy']
+  async train(featuresArr, onProgressCallback = () => {}, onStatsCallback = () => {}, symbolOverride = null) {
+    console.log('[LSTMModel] Starting training...');
+    const { model, scaler, valSize, seqCount, metrics } = await trainSequenceModel(tf, featuresArr, {
+      onEpoch: (epoch, logs) => onProgressCallback(epoch, logs),
     });
-  }
 
-  prepareSequences(featuresArr) {
-    const X = [];
-    const y = [];
+    // Calibrate P(up) and measure genuine out-of-sample skill on the val slice.
+    this.calibrator = fitCalibrator(metrics?.valProbsUp || [], metrics?.valYup || []);
+    this.skill = brierSkill(metrics?.valProbsUp || [], metrics?.valYup || []);
 
-    // Filter nulls and convert to matrix
-    const cleanRows = [];
-    for (let i = 0; i < featuresArr.length; i++) {
-        let hasNull = false;
-        const rowData = [];
-        for (const feat of FEATURES) {
-            let val = featuresArr[i][feat];
-            if (val === null || val === undefined || Number.isNaN(val)) {
-                hasNull = true; 
-                break;
-            }
-            rowData.push(val);
-        }
-        if (featuresArr[i].target_class === null) hasNull = true;
-        
-        if (!hasNull) {
-            cleanRows.push({
-                x: rowData,
-                y: featuresArr[i].target_class
-            });
-        }
-    }
-
-    // create overlapping sequences
-    if (cleanRows.length > LOOKBACK) {
-        for (let i = 0; i < cleanRows.length - LOOKBACK; i++) {
-          const seqX = [];
-          for (let j = 0; j < LOOKBACK; j++) {
-             seqX.push(cleanRows[i + j].x);
-          }
-          X.push(seqX);
-          y.push(cleanRows[i + LOOKBACK - 1].y);
-        }
-    }
-
-    return { X, y };
-  }
-
-  async train(featuresArr, onProgressCallback = (epoch, logs) => {}, onStatsCallback = (stats) => {}, symbolOverride = null) {
-    console.log("[LSTMModel] Starting training prep...");
-    
-    const {X, y} = this.prepareSequences(featuresArr);
-    
-    // Provide stats back to UI
     onStatsCallback({
-        sequences: X.length,
-        validRows: featuresArr.length
+      sequences: seqCount,
+      validRows: featuresArr.length,
+      valSize,
+      valAccuracy: metrics?.valAccuracy ?? null,
+      confusion: metrics?.confusion ?? null,
+      skill: this.skill,
     });
 
-    if (X.length < 100) {
-       throw new Error(`Insufficient data: Created ${X.length} sequences. Need at least 100. Try fetching more history.`);
-    }
-
-    if (!this.model) {
-      this.buildModel();
-    }
-
-    // Walk forward split - no shuffling time series!
-    const splitIdx = Math.floor(X.length * 0.8);
-    
-    const xTrainT = tf.tensor3d(X.slice(0, splitIdx));
-    const yTrainT = tf.tensor2d(y.slice(0, splitIdx), [splitIdx, 1]);
-
-    const xValT = tf.tensor3d(X.slice(splitIdx));
-    const yValT = tf.tensor2d(y.slice(splitIdx), [X.length - splitIdx, 1]);
-
-    try {
-        await this.model.fit(xTrainT, yTrainT, {
-            epochs: 50,
-            batchSize: 64,
-            validationData: [xValT, yValT],
-            shuffle: false, // critical for time series
-            callbacks: {
-              onEpochEnd: (epoch, logs) => {
-                onProgressCallback(epoch, logs);
-              }
-            }
-        });
-    } finally {
-        // Manually dispose of tensors to prevent memory leaks
-        xTrainT.dispose();
-        yTrainT.dispose();
-        xValT.dispose();
-        yValT.dispose();
-    }
-
-    console.log("[LSTMModel] Training complete.");
+    this.model = model;
+    this.scaler = scaler;
     this.isTrained = true;
 
-    // Save model to DB
-    const path = getModelSavePath(symbolOverride);
-    await this.model.save(path);
-    console.log(`[LSTMModel] Weights saved to DB at ${path}.`);
+    await this.model.save(getModelSavePath(symbolOverride));
+    this._saveScalerLocal(symbolOverride);
+    console.log('[LSTMModel] Weights + scaler saved locally.');
 
-    // Auto-sync to cloud
     try {
-        const symbol = symbolOverride || useStore.getState().symbol;
-        // Capture model artifacts to a single object
-        const saveResult = await this.model.save(tf.io.withSaveHandler(async (artifacts) => {
-            return artifacts;
-        }));
-        await syncManager.uploadModel(symbol, 'lstm', saveResult);
+      const symbol = symbolOverride || useStore.getState().symbol;
+      const artifacts = await this.model.save(tf.io.withSaveHandler(async (a) => a));
+      await syncManager.uploadModel(symbol, 'lstm', {
+        artifacts, scaler: this.scaler, calibrator: this.calibrator, skill: this.skill,
+        featureCount: FEATURE_COUNT, lookback: LOOKBACK,
+      });
     } catch (e) {
-        console.error("[LSTMModel] Cloud sync failed:", e.message);
+      console.error('[LSTMModel] Cloud sync failed:', e.message);
     }
   }
 
+  /** @returns {{signal, probability, skill, probs:[pDown,pNeutral,pUp]}} */
   predictSequence(recentFeatures) {
-     if (!this.isTrained || !this.model || recentFeatures.length < LOOKBACK) {
-         return { signal: 'HOLD', probability: 0.5 };
-     }
+    if (!this.isTrained || !this.model || recentFeatures.length < LOOKBACK) {
+      return { signal: 'HOLD', probability: 0.5, skill: this.skill, probs: [1 / 3, 1 / 3, 1 / 3] };
+    }
+    // Build the last LOOKBACK complete rows as raw feature vectors.
+    const window = recentFeatures.slice(-LOOKBACK);
+    if (window.length < LOOKBACK || !window.every(rowIsComplete)) {
+      return { signal: 'HOLD', probability: 0.5, skill: this.skill, probs: [1 / 3, 1 / 3, 1 / 3] };
+    }
+    const seqRows = window.map(rowToVector);
+    const probs = predictSequenceProba(tf, this.model, this.scaler, seqRows);
+    const [pDown, , pUpRaw] = probs;
+    const pUp = calibrate(this.calibrator, pUpRaw); // calibrated P(up)
 
-     return tf.tidy(() => {
-         const seqX = [];
-         // grab the last `LOOKBACK` items
-         const latestContext = recentFeatures.slice(-LOOKBACK);
-         
-         for (const row of latestContext) {
-             const rowData = [];
-             for (const feat of FEATURES) {
-                 const v = row[feat];
-                 rowData.push(v !== null && v !== undefined && !Number.isNaN(v) ? v : 0);
-             }
-             seqX.push(rowData);
-         }
+    let signal = 'HOLD';
+    if (pUp >= UP_THRESHOLD && pUpRaw > pDown) signal = 'BUY';
+    else if ((1 - pUp) >= DOWN_THRESHOLD && pDown > pUpRaw) signal = 'SELL';
 
-         const inputTensor = tf.tensor3d([seqX]);
-         const predTensor  = this.model.predict(inputTensor);
-         const probability = predTensor.dataSync()[0];
-
-         // Tighter bands → fewer but higher-quality signals
-         let signal = 'HOLD';
-         if (probability > 0.65) signal = 'BUY';
-         else if (probability < 0.35) signal = 'SELL';
-
-         return { signal, probability };
-     });
+    return { signal, probability: pUp, skill: this.skill, probs };
   }
 }

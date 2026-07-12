@@ -1,151 +1,92 @@
-import { RandomForestClassifier as RFClassifier } from 'ml-random-forest';
 import { useStore } from '@/store/useStore';
 import { syncManager } from '@/services/SyncManager';
+import { rowToVector, LABEL } from '@/lib/featureContract';
+import { buildTabular } from '@/models/core/dataset';
+import { trainRandomForest, loadRandomForest, predictRfProba } from '@/models/core/rfCore';
+import { fitCalibrator, calibrate } from '@/models/core/calibration';
+import { brierSkill } from '@/models/core/ensemble';
+import { walkForwardOOS } from '@/models/core/walkforward';
 
-const FEATURES = [
-  // Price action
-  'log_return', 'hl_range', 'body_size',
-  // Momentum oscillators
-  'rsi_norm', 'macd_hist', 'stoch_k', 'stoch_d', 'cci', 'williams_r',
-  // Volatility / bands
-  'bb_pct_b', 'bb_width', 'atr_norm', 'squeeze_on',
-  // Trend / EMA
-  'trend_regime', 'trend_strength', 'ema9_gt_21', 'ema21_gt_50',
-  // ADX / directional
-  'adx_norm', 'di_alignment',
-  // Volume
-  'vol_ratio', 'obv_trend',
-  // S/R & structure
-  'dist_to_support', 'dist_to_resistance', 'pivot_dist',
-  'ms_structure_num',
-  // Patterns & divergence
-  'trigger_engulfing', 'trigger_pinbar', 'rsi_bull_div', 'rsi_bear_div',
-  // Session & macro
-  'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos', 'macro_trend',
-];
+const UP_BAND = 0.42;   // P(up) share needed to vote BUY
+const DOWN_BAND = 0.42; // P(down) share needed to vote SELL
 
 export class RandomForestModel {
   name = 'RandomForestModel';
-  model = null;
+  model = null;      // loaded RFClassifier instance
+  calibrator = null;
+  skill = null;
   isTrained = false;
-  options = {
-    seed: 42,
-    maxFeatures: 5,
-    replacement: true,
-    nEstimators: 50,
-    treeOptions: { maxDepth: 6, minNumSamples: 10 },
-  };
 
   getStorageKey(symbolOverride = null) {
     const symbol = symbolOverride || useStore.getState().symbol || 'EUR/USD';
     return `tradebot_rf_${symbol.replace('/', '').toLowerCase()}`;
   }
 
-  async saveToLocal(symbolOverride = null) {
-    if (!this.model || !this.isTrained) return;
+  async saveToLocal(payload, symbolOverride = null) {
     try {
-      const modelData = this.model.toJSON();
-      localStorage.setItem(this.getStorageKey(symbolOverride), JSON.stringify(modelData));
-      
-      // Auto-sync to cloud
+      localStorage.setItem(this.getStorageKey(symbolOverride), JSON.stringify(payload));
       const symbol = symbolOverride || useStore.getState().symbol;
-      await syncManager.uploadModel(symbol, 'randomforest', modelData);
+      await syncManager.uploadModel(symbol, 'randomforest', payload);
     } catch (e) {
-      console.error("[RandomForestModel] Save failed:", e.message);
+      console.error('[RandomForestModel] Save failed:', e.message);
     }
   }
 
   async loadFromLocal(cloudWeights = null) {
     try {
-      let modelData = cloudWeights;
-      if (!modelData) {
+      let payload = cloudWeights;
+      if (!payload) {
         const saved = localStorage.getItem(this.getStorageKey());
         if (!saved) return false;
-        modelData = JSON.parse(saved);
+        payload = JSON.parse(saved);
       }
-
-      this.model = RFClassifier.load(modelData);
+      // Wrapper shape { model, calibrator, skill }; fall back to raw json.
+      const json = payload.model ? payload.model : payload;
+      this.model = loadRandomForest(json);
+      this.calibrator = payload.calibrator || null;
+      this.skill = payload.skill ?? null;
       this.isTrained = true;
-
-      // If we loaded from cloud, save to local for faster next boot
-      if (cloudWeights) {
-        localStorage.setItem(this.getStorageKey(), JSON.stringify(modelData));
-      }
-
-      console.log("[RandomForestModel] Loaded weights.");
+      if (cloudWeights) localStorage.setItem(this.getStorageKey(), JSON.stringify(payload));
+      console.log('[RandomForestModel] Loaded weights.');
       return true;
     } catch (e) {
-      console.error("[RandomForestModel] Load failed:", e.message);
+      console.error('[RandomForestModel] Load failed:', e.message);
       return false;
     }
   }
 
-  prepareData(featuresArr) {
-    const X = [];
-    const y = [];
-
-    for (let i = 200; i < featuresArr.length - 1; i++) {
-      const row = featuresArr[i];
-      let hasNull = false;
-      const xRow = [];
-      
-      for (const feat of FEATURES) {
-        if (row[feat] === null || row[feat] === undefined || Number.isNaN(row[feat])) {
-          hasNull = true;
-          break;
-        }
-        xRow.push(row[feat]);
-      }
-
-      if (row.target_class === null) hasNull = true;
-
-      if (!hasNull) {
-        X.push(xRow);
-        // ml-random-forest via ml-cart requires numeric classes, strings will throw "Invalid array length"
-        y.push(row.target_class === 1 ? 1 : 0);
-      }
-    }
-
-    return { X, y };
-  }
-
   async train(featuresArr, symbolOverride = null) {
-    const { X, y } = this.prepareData(featuresArr);
-    if (X.length < 50) {
-      throw new Error("Not enough clean data to train Random Forest.");
-    }
+    const { X, y } = buildTabular(featuresArr);
+    if (X.length < 80) throw new Error(`Not enough clean data to train Random Forest (${X.length}).`);
 
-    const splitIdx = Math.floor(X.length * 0.8);
-    const xTrain = X.slice(0, splitIdx);
-    const yTrain = y.slice(0, splitIdx);
+    // Walk-forward OOS (train on 3-class labels, score P(up) vs up-outcome).
+    const yUp = y.map((v) => (v === LABEL.UP ? 1 : 0));
+    const wf = walkForwardOOS(X, y, yUp, {
+      fit: (xt, yt) => loadRandomForest(trainRandomForest(xt, yt)),
+      proba: (m, v) => predictRfProba(m, v)[2],
+    });
+    this.calibrator = fitCalibrator(wf.scores, wf.y);
+    this.skill = brierSkill(wf.scores, wf.y);
 
-    this.model = new RFClassifier(this.options);
-    this.model.train(xTrain, yTrain);
+    // Deploy a model on all data except the last (leaky) HORIZON labels.
+    const deployEnd = Math.max(60, X.length - LABEL.HORIZON);
+    const json = trainRandomForest(X.slice(0, deployEnd), y.slice(0, deployEnd));
+    this.model = loadRandomForest(json);
+
     this.isTrained = true;
-    console.log(`[RandomForestModel] Trained 50 trees on ${xTrain.length} samples for ${symbolOverride || 'current asset'}.`);
-    
-    await this.saveToLocal(symbolOverride);
+    console.log(`[RandomForestModel] Trained (${deployEnd} rows), OOS skill=${(this.skill ?? 0).toFixed(3)}.`);
+    await this.saveToLocal({ model: json, calibrator: this.calibrator, skill: this.skill }, symbolOverride);
   }
 
+  /** @returns {{signal, probability, skill, probs:[pDown,pNeutral,pUp]}} */
   predict(latestRow) {
-    if (!this.isTrained || !this.model) {
-      return { signal: 'HOLD', probability: 0.5 };
-    }
-
-    const xInput = [];
-    for (const feat of FEATURES) {
-      const v = latestRow[feat];
-      xInput.push(v !== null && v !== undefined && !Number.isNaN(v) ? v : 0);
-    }
-
-    const preds     = this.model.predict([xInput]);
-    const predClass = preds[0];
-    const probability = predClass === 1 ? 0.68 : 0.32;
-
+    if (!this.isTrained || !this.model) return { signal: 'HOLD', probability: 0.5, skill: null, probs: [1 / 3, 1 / 3, 1 / 3] };
+    const probs = predictRfProba(this.model, rowToVector(latestRow));
+    const [pDown, , pUpRaw] = probs;
+    const pUp = calibrate(this.calibrator, pUpRaw);
     let signal = 'HOLD';
-    if (probability > 0.6)  signal = 'BUY';
-    else if (probability < 0.4) signal = 'SELL';
-
-    return { signal, probability };
+    if (pUpRaw >= UP_BAND && pUpRaw > pDown) signal = 'BUY';
+    else if (pDown >= DOWN_BAND && pDown > pUpRaw) signal = 'SELL';
+    return { signal, probability: pUp, skill: this.skill, probs };
   }
 }
