@@ -27,6 +27,10 @@ export const config = {
   historyBars: num(process.env.BOT_HISTORY_BARS, 3000),
   callSpacingMs: num(process.env.BOT_CALL_SPACING_MS, 8000),
 
+  // Telegram alerts only fire inside this UTC/GMT window (London + early NY).
+  telegramStartHourUtc: num(process.env.TELEGRAM_START_HOUR_UTC, 8),
+  telegramEndHourUtc: num(process.env.TELEGRAM_END_HOUR_UTC, 15),
+
   ledgerFile: process.env.BOT_LEDGER || path.join(__dirname, 'data', 'ledger.json'),
 };
 

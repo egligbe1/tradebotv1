@@ -1,4 +1,5 @@
 import { useStore } from '../store/useStore.js';
+import { buildSignalMessage, isTelegramWindowOpen } from '../lib/signalMessage.js';
 
 export class TelegramService {
   constructor() {
@@ -18,23 +19,22 @@ export class TelegramService {
         return;
     }
 
-    const action = signalData.signal === 'BUY' ? '🟢 BUY' : '🔴 SELL';
-    const conf = (signalData.confidence * 100).toFixed(1);
-    
-    // Switch to HTML for 100% reliability (avoid unescaped _ or *)
-    const message = `
-<b>🚨 TRADEBOT SIGNAL 🚨</b>
-<b>Asset:</b> ${symbol}
-<b>Action:</b> ${action}
-<b>Conviction:</b> ${conf}%
+    // Only alert during the 08:00–15:00 GMT window (London + early NY).
+    if (!isTelegramWindowOpen()) {
+        console.log(`[TelegramService] SKIPPED (outside 08:00–15:00 GMT window): ${signalData.signal} ${symbol}`);
+        return;
+    }
 
-<b>Entry:</b> ${signalData.entry}
-<b>Stop Loss:</b> ${signalData.stop_loss}
-<b>Take Profit 1:</b> ${signalData.take_profit_1}
-<b>Take Profit 2:</b> ${signalData.take_profit_2}
-
-<i>Models Aligned: Rule Engine, LSTM, RF, Logistic Regression</i>
-<i>Trend Filter: Aligned with Daily 200 EMA</i>`;
+    const message = buildSignalMessage(symbol, {
+      signal: signalData.signal,
+      confidence: signalData.confidence,
+      entry: signalData.entry,
+      stopLoss: signalData.stop_loss,
+      tp1: signalData.take_profit_1,
+      tp2: signalData.take_profit_2,
+      modelsAligned: signalData.models_aligned,
+      trendFilter: signalData.trend_filter,
+    });
 
     const url = `https://api.telegram.org/bot${activeToken}/sendMessage`;
     

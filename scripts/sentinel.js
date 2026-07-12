@@ -15,6 +15,7 @@ import { predictSequenceProba } from '../src/models/core/lstmCore.js';
 import { calibrate } from '../src/models/core/calibration.js';
 import { fuseCalibrated } from '../src/models/core/ensemble.js';
 import { getCostModel } from '../src/lib/assetConfig.js';
+import { buildSignalMessage, isTelegramWindowOpen, alignedModelNames, trendFilterText } from '../src/lib/signalMessage.js';
 
 let tf;
 try {
@@ -38,6 +39,7 @@ const CONVICTION_BAND = 0.06;
 const MIN_CONSENSUS = 2;
 const SL_ATR_MULT = 1.5;
 const RR = 2;
+const RR2 = 3;
 
 if (!supabaseUrl || !supabaseKey || !twelveDataKey) {
   console.error('❌ Missing required environment variables!');
@@ -122,12 +124,23 @@ class CloudSignalAggregator {
 
     const atr = row.atr || row.close * 0.001;
     const risk = SL_ATR_MULT * atr;
+    const digits = getCostModel(symbol).digits;
+    const rnd = (v) => Number(v.toFixed(digits));
+    const trendAligned = signal === 'BUY'
+      ? (row.trend_regime >= 0 || row.macro_trend === 1)
+      : signal === 'SELL'
+        ? (row.trend_regime <= 0 || row.macro_trend === -1)
+        : false;
+
     return {
       signal,
       confidence: Math.min(Math.abs(pEns - 0.5) * 2, 1),
-      entry: row.close,
-      sl: signal === 'BUY' ? row.close - risk : row.close + risk,
-      tp: signal === 'BUY' ? row.close + RR * risk : row.close - RR * risk,
+      entry: rnd(row.close),
+      sl: rnd(signal === 'BUY' ? row.close - risk : row.close + risk),
+      tp: rnd(signal === 'BUY' ? row.close + RR * risk : row.close - RR * risk),
+      tp2: rnd(signal === 'BUY' ? row.close + RR2 * risk : row.close - RR2 * risk),
+      modelsAligned: alignedModelNames(preds, signal),
+      trendFilter: trendFilterText(trendAligned),
     };
   }
 }
@@ -168,17 +181,21 @@ async function manageOpenTrades(symbol, currentPrice) {
   } catch { /* ignore */ }
 }
 
+const startHour = Number(process.env.TELEGRAM_START_HOUR_UTC || 8);
+const endHour = Number(process.env.TELEGRAM_END_HOUR_UTC || 15);
+
 async function sendTelegram(symbol, s) {
   if (!botToken || !chatId || s.signal === 'HOLD') return;
-  const action = s.signal === 'BUY' ? '🟢 BUY' : '🔴 SELL';
-  const digits = getCostModel(symbol).digits;
-  const message = `<b>🚨 CLOUD SENTINEL ALERT 🚨</b>
-<b>Asset:</b> ${symbol}
-<b>Action:</b> ${action}
-<b>Conviction:</b> ${(s.confidence * 100).toFixed(1)}%
-
-<b>Entry:</b> ${s.entry.toFixed(digits)}
-<b>SL/TP:</b> ${s.sl.toFixed(digits)} / ${s.tp.toFixed(digits)}`;
+  // Only alert during the 08:00–15:00 GMT window (London + early NY).
+  if (!isTelegramWindowOpen(new Date(), startHour, endHour)) {
+    console.log(`[Sentinel] ⏰ ${symbol} ${s.signal} suppressed — outside ${startHour}:00–${endHour}:00 GMT window.`);
+    return;
+  }
+  const message = buildSignalMessage(symbol, {
+    signal: s.signal, confidence: s.confidence, entry: s.entry,
+    stopLoss: s.sl, tp1: s.tp, tp2: s.tp2,
+    modelsAligned: s.modelsAligned, trendFilter: s.trendFilter,
+  });
   try {
     await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: 'POST',

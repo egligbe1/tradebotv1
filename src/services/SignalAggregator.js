@@ -6,6 +6,7 @@ import { useStore } from '@/store/useStore';
 import { syncManager } from '@/services/SyncManager';
 import { priceDigits } from '@/lib/assetConfig';
 import { fuseCalibrated } from '@/models/core/ensemble';
+import { alignedModelNames, trendFilterText } from '@/lib/signalMessage';
 
 // Ensemble P(up) must clear 0.5 ± CONVICTION_BAND to fire a directional signal.
 const CONVICTION_BAND = 0.06;
@@ -176,10 +177,26 @@ export class SignalAggregator {
       invalidation = `Signal invalidated if price closes ${side} ${fmt(sl)}`;
     }
 
+    // Which models actually agreed, and whether we're with the higher-TF trend.
+    const votesMap = {
+      ruleEngine: { signal: preds.ruleEngine.signal },
+      lstm: { signal: preds.lstm.signal },
+      randomForest: { signal: preds.randomForest.signal },
+      logistic: { signal: preds.logistic.signal },
+    };
+    const modelsAligned = alignedModelNames(votesMap, masterSignal);
+    const trendAligned = masterSignal === 'BUY'
+      ? (row.trend_regime >= 0 || row.macro_trend === 1)
+      : masterSignal === 'SELL'
+        ? (row.trend_regime <= 0 || row.macro_trend === -1)
+        : false;
+
     return {
       signal: masterSignal,
       confidence,
       ensemble_prob_up: pEns,
+      models_aligned: modelsAligned,
+      trend_filter: trendFilterText(trendAligned),
       timestamp: new Date().toISOString(),
       entry: fmt(entry),
       stop_loss: fmt(sl),

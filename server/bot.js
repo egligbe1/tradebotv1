@@ -13,6 +13,9 @@ import { config, assertConfig } from './config.js';
 import { buildFeatures, trainSymbol, evaluateSymbol, sendTelegram } from './core.js';
 import { loadLedger, saveLedger, manageTrades, hasOpenTrade, openTrade, ledgerStats } from './ledger.js';
 import { isMarketLikelyOpen } from '../src/lib/assetConfig.js';
+import { buildSignalMessage, isTelegramWindowOpen } from '../src/lib/signalMessage.js';
+
+const alertWindowOpen = () => isTelegramWindowOpen(new Date(), config.telegramStartHourUtc, config.telegramEndHourUtc);
 
 let tf;
 try { tf = await import('@tensorflow/tfjs-node'); console.log('🚀 tfjs-node'); }
@@ -52,8 +55,10 @@ async function scanOnce(ledger) {
       // 1) Manage existing paper trades against the latest bar.
       const closeEvents = manageTrades(ledger, symbol, { high: row.high, low: row.low, close: row.close }, nowIso);
       for (const ev of closeEvents) {
-        await sendTelegram(config.telegramToken, config.telegramChatId,
-          `📕 <b>${ev.symbol}</b> ${ev.reason} (${(ev.fraction * 100).toFixed(0)}%) — P&L ${ev.pnlPct >= 0 ? '+' : ''}${ev.pnlPct.toFixed(2)}%`);
+        if (alertWindowOpen()) {
+          await sendTelegram(config.telegramToken, config.telegramChatId,
+            `📕 <b>${ev.symbol}</b> ${ev.reason} (${(ev.fraction * 100).toFixed(0)}%) — P&L ${ev.pnlPct >= 0 ? '+' : ''}${ev.pnlPct.toFixed(2)}%`);
+        }
         console.log(`   💤 ${symbol} ${ev.reason} ${ev.pnlPct.toFixed(2)}%`);
       }
 
@@ -66,9 +71,14 @@ async function scanOnce(ledger) {
         const t = openTrade(ledger, sig, config.riskPct, nowIso);
         if (t) {
           const arrow = sig.signal === 'BUY' ? '🟢' : '🔴';
-          await sendTelegram(config.telegramToken, config.telegramChatId,
-            `${arrow} <b>${symbol} ${sig.signal}</b>\nConviction: ${(sig.confidence * 100).toFixed(1)}%\nEntry ${sig.entry}\nSL ${sig.sl}\nTP1 ${sig.tp1} · TP2 ${sig.tp2}`);
-          console.log(`   ${arrow} ${symbol} ${sig.signal} @${sig.entry} conf=${(sig.confidence * 100).toFixed(1)}%`);
+          if (alertWindowOpen()) {
+            await sendTelegram(config.telegramToken, config.telegramChatId, buildSignalMessage(symbol, {
+              signal: sig.signal, confidence: sig.confidence, entry: sig.entry,
+              stopLoss: sig.sl, tp1: sig.tp1, tp2: sig.tp2,
+              modelsAligned: sig.modelsAligned, trendFilter: sig.trendFilter,
+            }));
+          }
+          console.log(`   ${arrow} ${symbol} ${sig.signal} @${sig.entry} conf=${(sig.confidence * 100).toFixed(1)}%${alertWindowOpen() ? '' : ' (alert suppressed — outside GMT window)'}`);
         }
       } else if (sig.signal !== prev) {
         console.log(`   … ${symbol} ${sig.signal} (pUp=${sig.ensembleProbUp.toFixed(3)}, votes ${sig.votes.bull}/${sig.votes.bear})`);

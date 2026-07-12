@@ -17,6 +17,7 @@ import { fitCalibrator, calibrate } from '../src/models/core/calibration.js';
 import { brierSkill, fuseCalibrated } from '../src/models/core/ensemble.js';
 import { walkForwardOOS } from '../src/models/core/walkforward.js';
 import { getCostModel } from '../src/lib/assetConfig.js';
+import { alignedModelNames, trendFilterText } from '../src/lib/signalMessage.js';
 
 export const DEFAULT_WEIGHTS = { ruleEngine: 0.35, lstm: 0.35, randomForest: 0.20, logistic: 0.10 };
 const CONVICTION_BAND = 0.06;
@@ -154,6 +155,13 @@ export function evaluateSymbol(tf, symbol, features, bundle, weights = DEFAULT_W
   const digits = getCostModel(symbol).digits;
   const rnd = (v) => Number(v.toFixed(digits));
 
+  const modelsAligned = alignedModelNames(preds, signal);
+  const trendAligned = signal === 'BUY'
+    ? (row.trend_regime >= 0 || row.macro_trend === 1)
+    : signal === 'SELL'
+      ? (row.trend_regime <= 0 || row.macro_trend === -1)
+      : false;
+
   return {
     symbol,
     signal,
@@ -164,6 +172,8 @@ export function evaluateSymbol(tf, symbol, features, bundle, weights = DEFAULT_W
     tp1: signal === 'BUY' ? rnd(row.close + RR * risk) : rnd(row.close - RR * risk),
     tp2: signal === 'BUY' ? rnd(row.close + RR2 * risk) : rnd(row.close - RR2 * risk),
     votes: { bull: bullVotes, bear: bearVotes },
+    modelsAligned,
+    trendFilter: trendFilterText(trendAligned),
     price: row.close,
   };
 }
