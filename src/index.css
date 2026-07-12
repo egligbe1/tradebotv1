@@ -1,59 +1,111 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
- 
+
 @layer base {
   :root {
-    --background: 222 47% 7%;
+    /* Deep "ink" terminal palette with a gold signal accent + cyan data accent */
+    --background: 224 47% 6%;
     --foreground: 210 40% 98%;
-    --card: 222 47% 9%;
+    --card: 224 39% 9%;
     --card-foreground: 210 40% 98%;
-    --popover: 222 47% 9%;
+    --popover: 224 42% 8%;
     --popover-foreground: 210 40% 98%;
-    --primary: 44 87% 60%;
-    --primary-foreground: 222 47% 7%;
-    --secondary: 217.2 32.6% 17.5%;
+    --primary: 42 94% 58%;              /* gold — signal / money */
+    --primary-foreground: 224 47% 7%;
+    --secondary: 222 28% 15%;
     --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --muted: 222 24% 13%;
+    --muted-foreground: 216 18% 62%;
+    --accent: 190 88% 46%;              /* cyan — data / tech (use sparingly) */
+    --accent-foreground: 224 47% 7%;
+    --destructive: 0 72% 48%;
     --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224 76.3% 48%;
-    --radius: 0.5rem;
+    --border: 220 26% 15%;
+    --input: 220 26% 15%;
+    --ring: 42 94% 58%;
+    --radius: 0.75rem;
+
+    /* Semantic trading tokens */
+    --buy: 152 62% 45%;
+    --sell: 0 72% 52%;
+    --success: 152 62% 45%;
+    --warning: 38 92% 55%;
+
+    --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-display: 'Space Grotesk', 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   }
- 
+
   .dark {
-    --background: 222 47% 7%;
+    --background: 224 47% 6%;
     --foreground: 210 40% 98%;
-    --card: 222 47% 9%;
+    --card: 224 39% 9%;
     --card-foreground: 210 40% 98%;
-    --popover: 222 47% 9%;
+    --popover: 224 42% 8%;
     --popover-foreground: 210 40% 98%;
-    --primary: 44 87% 60%;
-    --primary-foreground: 222 47% 7%;
-    --secondary: 217.2 32.6% 17.5%;
+    --primary: 42 94% 58%;
+    --primary-foreground: 224 47% 7%;
+    --secondary: 222 28% 15%;
     --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --muted: 222 24% 13%;
+    --muted-foreground: 216 18% 62%;
+    --accent: 190 88% 46%;
+    --accent-foreground: 224 47% 7%;
+    --destructive: 0 72% 48%;
     --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224 76.3% 48%;
+    --border: 220 26% 15%;
+    --input: 220 26% 15%;
+    --ring: 42 94% 58%;
   }
 }
- 
+
 @layer base {
   * {
     @apply border-border;
   }
+  html {
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    /* Ambient terminal glow: faint gold (top-left) + cyan (top-right) over ink */
+    background-image:
+      radial-gradient(60rem 40rem at 0% -10%, hsl(42 94% 58% / 0.06), transparent 60%),
+      radial-gradient(50rem 40rem at 100% -20%, hsl(190 88% 46% / 0.05), transparent 55%);
+    background-attachment: fixed;
+  }
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+  /* Tabular figures everywhere numbers are shown, so prices/columns align. */
+  .font-mono {
+    font-variant-numeric: tabular-nums;
   }
 }
+
+@layer utilities {
+  /* Elevated glass surface used across cards/panels */
+  .surface {
+    background: hsl(var(--card) / 0.7);
+    backdrop-filter: blur(8px);
+    border: 1px solid hsl(var(--border));
+  }
+  .glow-primary { box-shadow: 0 0 0 1px hsl(var(--primary) / 0.15), 0 8px 30px -12px hsl(var(--primary) / 0.35); }
+  .text-buy { color: hsl(var(--buy)); }
+  .text-sell { color: hsl(var(--sell)); }
+  .tnum { font-variant-numeric: tabular-nums; }
+}
+
+/* Refined thin scrollbars for the data-dense terminal feel */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 9999px; }
+*::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.4); }
