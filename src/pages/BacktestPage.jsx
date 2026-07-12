@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useStore, AVAILABLE_SYMBOLS } from '@/store/useStore';
 import { dataManager } from '@/services/DataManager';
+import { signalAggregator } from '@/services/SignalAggregator';
 import backtestEngine from '@/services/BacktestEngine.js';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area 
@@ -11,6 +12,9 @@ import {
 } from 'lucide-react';
 
 export default function BacktestPage() {
+  const customSymbols = useStore((s) => s.customSymbols);
+  const symbolSupport = useStore((s) => s.symbolSupport);
+  const symbolOptions = [...AVAILABLE_SYMBOLS, ...(customSymbols || [])];
   const [symbol, setSymbol] = useState(AVAILABLE_SYMBOLS[0]);
   const [balance, setBalance] = useState(10000);
   const [risk, setRisk] = useState(1);
@@ -24,18 +28,34 @@ export default function BacktestPage() {
     setError('');
 
     try {
+      // Align the ACTIVE symbol so the ensemble loads THIS symbol's trained
+      // models (generateSignal reads the store symbol internally). Without this
+      // the backtest would silently evaluate with whatever symbol was selected.
+      const store = useStore.getState();
+      if (store.symbol !== symbol) store.setSymbol(symbol);
+      await signalAggregator.initializeAllModels();
+
+      // The ensemble needs a 2-model consensus. The Rule Engine always votes,
+      // so at least ONE trained ML model is required or no trade can ever open.
+      const m = signalAggregator.models;
+      const mlTrained = ['logistic', 'randomForest', 'lstm'].filter((k) => m[k]?.isTrained).length;
+      if (mlTrained === 0) {
+        throw new Error(`No trained ML models found for ${symbol}. Train it in Models → "Train Current Asset" (or wait for the cloud batch-train to finish), then rerun. Backtest needs at least one trained model for the ensemble to reach consensus.`);
+      }
+
       // 1. Fetch 1H and 4H history (2000 candles for deep backtest)
       const res1h = await dataManager.getCandles(symbol, '1h', 2000);
       const res4h = await dataManager.getCandles(symbol, '4h', 500);
 
       const report = await backtestEngine.run(
-        symbol, 
-        res1h.values, 
-        res4h.values, 
-        Number(balance), 
+        symbol,
+        res1h.values,
+        res4h.values,
+        Number(balance),
         Number(risk) / 100
       );
 
+      report.modelsTrained = mlTrained + 1; // + rule engine
       setResults(report);
     } catch (e) {
       setError(e.message);
@@ -53,12 +73,14 @@ export default function BacktestPage() {
         </div>
         
         <div className="flex flex-wrap items-center gap-3 bg-card p-2 rounded-lg border border-border shadow-sm">
-          <select 
+          <select
             value={symbol}
             onChange={(e) => setSymbol(e.target.value)}
-            className="bg-background border border-input rounded px-3 py-1.5 text-sm"
+            className="bg-background border border-input rounded px-3 py-1.5 text-sm font-mono"
           >
-            {AVAILABLE_SYMBOLS.map(s => <option key={s} value={s}>{s}</option>)}
+            {symbolOptions.map(s => (
+              <option key={s} value={s}>{s}{symbolSupport?.[s] === 'plan' ? '  🔒 plan-locked' : ''}</option>
+            ))}
           </select>
           
           <div className="flex items-center gap-2 px-2 border-l border-border">
@@ -93,9 +115,14 @@ export default function BacktestPage() {
       </header>
 
       {error && (
-        <div className="bg-destructive/10 border border-destructive/20 text-destructive p-4 rounded-lg flex items-center gap-3">
-          <AlertTriangle size={18} />
-          <p className="text-sm font-medium">{error}</p>
+        <div className="bg-destructive/10 border border-destructive/20 text-destructive p-4 rounded-lg flex items-start gap-3">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+          <div className="text-sm">
+            <p className="font-medium">{error}</p>
+            {/plan|twelvedata\.com/i.test(error) && (
+              <p className="mt-1 text-destructive/80">Tip: open <span className="font-semibold">Settings → Trading Instruments → Verify plan access</span> to see which symbols your key supports (🔒 = plan-locked).</p>
+            )}
+          </div>
         </div>
       )}
 
@@ -137,8 +164,8 @@ export default function BacktestPage() {
                   <AreaChart data={results.equityCurve} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                     <defs>
                       <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="var(--primary)" stopOpacity={0}/>
+                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
@@ -149,7 +176,7 @@ export default function BacktestPage() {
                       itemStyle={{ color: 'white', fontWeight: 'bold' }}
                       formatter={(val) => [`$${val.toFixed(2)}`, 'Balance']}
                     />
-                    <Area type="monotone" dataKey="value" stroke="var(--primary)" strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
+                    <Area type="monotone" dataKey="value" stroke="hsl(var(--primary))" strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>

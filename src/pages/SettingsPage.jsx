@@ -1,8 +1,9 @@
 import { useStore, AVAILABLE_SYMBOLS, normalizeSymbol } from '@/store/useStore';
 import { notificationManager } from '@/services/NotificationManager';
 import { telegramService } from '@/services/TelegramService';
+import { dataManager } from '@/services/DataManager';
 import { classifySymbol, QUICK_PICKS } from '@/lib/assetConfig';
-import { Bell, Send, CheckCircle2, AlertCircle, RefreshCw, Search, X, TrendingUp } from 'lucide-react';
+import { Bell, Send, CheckCircle2, AlertCircle, RefreshCw, Search, X, TrendingUp, Lock, ShieldCheck } from 'lucide-react';
 import React, { useState } from 'react';
 
 export default function SettingsPage() {
@@ -14,12 +15,44 @@ export default function SettingsPage() {
   const customSymbols = useStore((state) => state.customSymbols);
   const addSymbol = useStore((state) => state.addSymbol);
   const removeSymbol = useStore((state) => state.removeSymbol);
+  const symbolSupport = useStore((state) => state.symbolSupport);
+  const setSymbolSupport = useStore((state) => state.setSymbolSupport);
   const [symbolQuery, setSymbolQuery] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [checkMsg, setCheckMsg] = useState('');
 
-  const submitSymbol = (raw) => {
+  const reasonToStatus = (r) => (r === 'ok' ? 'ok' : r === 'plan' ? 'plan' : 'error');
+
+  const submitSymbol = async (raw) => {
     const s = normalizeSymbol(raw);
-    if (s) addSymbol(s);
     setSymbolQuery('');
+    if (!s) return;
+    addSymbol(s);
+    // Probe immediately so the user learns right away if it's plan-locked.
+    const r = await dataManager.probeSymbol(s);
+    setSymbolSupport({ [s]: reasonToStatus(r.reason) });
+    if (r.reason === 'plan') setCheckMsg(`"${s}" is not on your Twelve Data plan — added but locked.`);
+  };
+
+  const verifyPlanAccess = async () => {
+    setChecking(true);
+    const all = [...new Set([...AVAILABLE_SYMBOLS, ...(customSymbols || []), symbol])];
+    for (const s of all) {
+      setCheckMsg(`Checking ${s}…`);
+      const r = await dataManager.probeSymbol(s); // rate-limited internally
+      setSymbolSupport({ [s]: reasonToStatus(r.reason) });
+    }
+    setChecking(false);
+    setCheckMsg('Plan access verified. 🔒 = not on your plan, ✓ = supported.');
+  };
+
+  // ✓ / 🔒 / ⚠ badge for a symbol based on the last plan check.
+  const SupportBadge = ({ sym }) => {
+    const v = symbolSupport?.[sym];
+    if (v === 'ok') return <ShieldCheck className="w-3 h-3 text-success" title="Supported on your plan" />;
+    if (v === 'plan') return <Lock className="w-3 h-3 text-warning" title="Requires a higher Twelve Data plan" />;
+    if (v === 'error') return <AlertCircle className="w-3 h-3 text-destructive" title="Unavailable / error" />;
+    return null;
   };
   
   const telegramBotToken = useStore((state) => state.telegramBotToken);
@@ -99,7 +132,7 @@ export default function SettingsPage() {
           sessions are inferred automatically from the asset class.
         </p>
 
-        <form onSubmit={(e) => { e.preventDefault(); submitSymbol(symbolQuery); }} className="flex gap-2 mb-4">
+        <form onSubmit={(e) => { e.preventDefault(); submitSymbol(symbolQuery); }} className="flex gap-2 mb-3">
           <div className="relative flex-1">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
@@ -112,14 +145,27 @@ export default function SettingsPage() {
           <button type="submit" className="bg-primary text-primary-foreground font-semibold px-4 rounded-md hover:bg-primary/90 transition-colors">Add</button>
         </form>
 
+        <div className="flex items-center justify-between mb-4">
+          <button
+            onClick={verifyPlanAccess}
+            disabled={checking}
+            className="flex items-center gap-2 text-xs bg-secondary text-secondary-foreground px-3 py-1.5 rounded-md hover:bg-secondary/80 transition-colors disabled:opacity-50"
+          >
+            {checking ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+            {checking ? 'Checking…' : 'Verify plan access'}
+          </button>
+          {checkMsg && <span className="text-[11px] text-muted-foreground truncate ml-3">{checkMsg}</span>}
+        </div>
+
         <div className="flex flex-wrap gap-2 mb-4">
           {QUICK_PICKS.filter((s) => s.includes(symbolQuery.toUpperCase())).slice(0, 14).map((s) => (
             <button
               key={s}
               onClick={() => submitSymbol(s)}
-              className={`text-xs px-2.5 py-1 rounded-full border transition-colors font-mono ${symbol === s ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted/40 border-border hover:bg-muted'}`}
+              className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors font-mono ${symbol === s ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted/40 border-border hover:bg-muted'} ${symbolSupport?.[s] === 'plan' ? 'opacity-60' : ''}`}
             >
               {s}
+              <SupportBadge sym={s} />
             </button>
           ))}
         </div>
@@ -129,8 +175,9 @@ export default function SettingsPage() {
           {customSymbols && customSymbols.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {customSymbols.map((s) => (
-                <span key={s} className="inline-flex items-center gap-1 bg-secondary px-2 py-1 rounded font-mono text-secondary-foreground">
+                <span key={s} className="inline-flex items-center gap-1.5 bg-secondary px-2 py-1 rounded font-mono text-secondary-foreground">
                   <button onClick={() => setSymbol(s)} className="hover:text-primary">{s}</button>
+                  <SupportBadge sym={s} />
                   <button onClick={() => removeSymbol(s)} className="text-muted-foreground hover:text-destructive"><X className="w-3 h-3" /></button>
                 </span>
               ))}

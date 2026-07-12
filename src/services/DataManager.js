@@ -7,6 +7,17 @@ export class HardLimitError extends Error {
   }
 }
 
+// Thrown when a symbol requires a higher Twelve Data plan than the user's key.
+export class PlanRestrictedError extends Error {
+  constructor(symbol) {
+    super(`"${symbol}" isn't available on your Twelve Data plan. Choose a symbol your key supports (e.g. EUR/USD, GBP/USD, USD/JPY, BTC/USD, ETH/USD) or upgrade at twelvedata.com/pricing.`);
+    this.name = 'PlanRestrictedError';
+    this.symbol = symbol;
+  }
+}
+
+const isPlanMessage = (msg = '') => /plan|upgrade|grow or venture|venture plan/i.test(msg);
+
 class DataManager {
   constructor() {
     this.memCache = new Map();
@@ -114,6 +125,8 @@ class DataManager {
             continue;
           } else if (data.code === 401) {
              throw new Error('API Key invalid');
+          } else if (data.code === 403 || isPlanMessage(data.message)) {
+             throw new PlanRestrictedError(request.symbol);
           }
           throw new Error(data.message || 'Twelve Data API Error');
         }
@@ -235,6 +248,27 @@ class DataManager {
     await this.db.candles.clear();
     this.memCache.clear();
     console.log("[DataManager] Cache cleared successfully.");
+  }
+
+  /**
+   * Cheap 1-candle probe to check whether the current API key can access a
+   * symbol. Returns { ok, reason: 'ok'|'plan'|'nokey'|'error', message }.
+   */
+  async probeSymbol(symbol) {
+    const storageRaw = localStorage.getItem('trading-platform-storage');
+    const apiKey = storageRaw ? JSON.parse(storageRaw).state?.apiKey : null;
+    if (!apiKey) return { ok: false, reason: 'nokey', message: 'API key missing' };
+
+    const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=1h&outputsize=1&timezone=UTC&apikey=${apiKey}`;
+    try {
+      await this.fetchWithRateLimit(url, symbol, '1h');
+      return { ok: true, reason: 'ok' };
+    } catch (e) {
+      if (e instanceof PlanRestrictedError || isPlanMessage(e.message)) {
+        return { ok: false, reason: 'plan', message: e.message };
+      }
+      return { ok: false, reason: 'error', message: e.message };
+    }
   }
 
   /**

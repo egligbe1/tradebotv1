@@ -41,6 +41,10 @@ export const useStore = create(
         customSymbols: state.customSymbols.filter((s) => s !== sym),
       })),
 
+      // Map of symbol → 'ok' | 'plan' | 'error', populated by the plan-access check.
+      symbolSupport: {},
+      setSymbolSupport: (map) => set((state) => ({ symbolSupport: { ...state.symbolSupport, ...map } })),
+
       timeframe: '1h',
       setTimeframe: (tf) => set({ timeframe: tf }),
 
