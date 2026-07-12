@@ -43,9 +43,9 @@ export default function BacktestPage() {
         throw new Error(`No trained ML models found for ${symbol}. Train it in Models → "Train Current Asset" (or wait for the cloud batch-train to finish), then rerun. Backtest needs at least one trained model for the ensemble to reach consensus.`);
       }
 
-      // 1. Fetch 1H and 4H history (2000 candles for deep backtest)
-      const res1h = await dataManager.getCandles(symbol, '1h', 2000);
-      const res4h = await dataManager.getCandles(symbol, '4h', 500);
+      // 1. Fetch 1H and 4H history (deeper window = more trades, more trustworthy)
+      const res1h = await dataManager.getCandles(symbol, '1h', 3000);
+      const res4h = await dataManager.getCandles(symbol, '4h', 800);
 
       const report = await backtestEngine.run(
         symbol,
@@ -139,7 +139,7 @@ export default function BacktestPage() {
       {loading && (
         <div className="h-[500px] flex flex-col items-center justify-center text-center bg-card/50 border border-border rounded-xl">
           <div className="w-12 h-12 border-4 border-primary border-t-transparent animate-spin rounded-full mb-4" />
-          <h3 className="text-lg font-semibold">Scanning 2,000 Candles...</h3>
+          <h3 className="text-lg font-semibold">Scanning 3,000 Candles...</h3>
           <p className="text-muted-foreground">Calculating fractal S/R levels and generating AI votes for every hour.</p>
         </div>
       )}
@@ -157,7 +157,7 @@ export default function BacktestPage() {
             <div className="lg:col-span-2 bg-card border border-border rounded-xl p-6 shadow-sm">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="font-bold">Equity Growth Curve</h3>
-                <div className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">2,000 Candle Simulation</div>
+                <div className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">{results.equityCurve.length.toLocaleString()} Candle Simulation</div>
               </div>
               <div className="h-[400px] w-full min-h-[400px] relative">
                 <ResponsiveContainer width="99%" height="100%">
