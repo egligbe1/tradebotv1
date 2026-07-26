@@ -29,3 +29,6 @@ server/data/
 
 # Temp verification harnesses
 _*.test.mjs
+
+# Backtest parameter-sweep output logs
+_sweep*.out
