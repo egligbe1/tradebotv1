@@ -2,8 +2,8 @@ name: Autonomous Signal Sentinel
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Runs at the top of every hour
-  workflow_dispatch:      # Allows manual trigger for testing
+    - cron: '0 8-15 * * 1-5'  # Hourly, Mon-Fri 08:00-15:00 GMT (trading session window)
+  workflow_dispatch:          # Allows manual trigger for testing
 
 jobs:
   scan:

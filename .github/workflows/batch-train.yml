@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     # Triggered manually or via frontend REST API
   schedule:
-    # Run automatically every day at 00:00 UTC (Midnight) to flush out concept drift
-    - cron: '0 0 * * *'
+    # Run at 07:00 GMT Mon-Fri, before the 08:00 trading session, to flush out concept drift
+    - cron: '0 7 * * 1-5'
 
 jobs:
   train-cloud:
